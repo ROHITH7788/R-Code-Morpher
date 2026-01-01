@@ -1,19 +1,36 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcrypt'
+import { z } from 'zod'
+
+const inputSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
+  name: z.string().min(1).max(100).optional(),
+})
 
 export async function POST(req: Request) {
   try {
-    if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'Server database not configured' }, { status: 503 })
-    const { email, password, name } = await req.json()
-    if (!email || !password) return NextResponse.json({ error: 'Missing email/password' }, { status: 400 })
-    if (typeof password !== 'string' || password.length < 6) return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
-    const exists = await prisma.user.findUnique({ where: { email } })
-    if (exists) return NextResponse.json({ error: 'Email already registered' }, { status: 400 })
+    const body = await req.json()
+    const parsed = inputSchema.safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Invalid input' }, { status: 400 })
+    }
+    const { email, password, name } = parsed.data
+    const existing = await prisma.user.findUnique({ where: { email } })
+    if (existing) {
+      return NextResponse.json({ error: 'Email already in use' }, { status: 409 })
+    }
     const hashedPassword = await bcrypt.hash(password, 10)
-    const user = await prisma.user.create({ data: { email, name, hashedPassword } })
-    return NextResponse.json({ id: user.id })
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || 'Signup failed' }, { status: 500 })
+    const user = await prisma.user.create({
+      data: {
+        email,
+        name: name ?? null,
+        hashedPassword,
+      },
+    })
+    return NextResponse.json({ ok: true, userId: user.id })
+  } catch {
+    return NextResponse.json({ error: 'Signup failed' }, { status: 500 })
   }
 }
