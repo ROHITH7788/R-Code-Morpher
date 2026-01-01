@@ -2,18 +2,5 @@
   "version": 2,
   "builds": [{ "src": "package.json", "use": "@vercel/next" }],
   "buildCommand": "npx prisma migrate deploy && next build",
-  "env": {
-    "NEXTAUTH_URL": "https://YOUR_VERSEL_DOMAIN",
-    "NEXTAUTH_SECRET": "",
-    "DATABASE_URL": "",
-    "OPENAI_API_KEY": "",
-    "GOOGLE_CLIENT_ID": "",
-    "GOOGLE_CLIENT_SECRET": "",
-    "GITHUB_ID": "",
-    "GITHUB_SECRET": "",
-    "SMTP_HOST": "",
-    "SMTP_PORT": "587",
-    "SMTP_USER": "",
-    "SMTP_PASS": ""
-  }
+  "env": {}
 }
