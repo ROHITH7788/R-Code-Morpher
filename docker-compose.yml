@@ -1,0 +1,27 @@
+version: '3.9'
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: codemorpher
+      POSTGRES_PASSWORD: codemorpherpw
+      POSTGRES_DB: codemorpher
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  web:
+    build: .
+    ports:
+      - "3001:3000"
+    environment:
+      NEXTAUTH_URL: "http://localhost:3001"
+      NEXTAUTH_SECRET: "changeme"
+      DATABASE_URL: "postgresql://codemorpher:codemorpherpw@db:5432/codemorpher?schema=public"
+      OPENAI_API_KEY: ""
+    # Uncomment if you want to run migrations automatically on container start
+    # command: /bin/sh -c "npm run prisma:migrate:deploy && npm run start"
+
+volumes:
+  pgdata:

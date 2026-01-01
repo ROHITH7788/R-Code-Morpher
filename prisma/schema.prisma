@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(uuid())
+  name           String?
+  email          String   @unique
+  emailVerified  DateTime?
+  image          String?
+  hashedPassword String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  accounts       Account[]
+  sessions       Session[]
+  conversions    Conversion[]
+  files          FileObject[]
+  shareLinks     ShareLink[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expires   DateTime
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Conversion {
+  id          String   @id @default(uuid())
+  userId      String
+  sourceLang  String
+  targetLang  String
+  inputCode   String
+  outputCode  String
+  explanation String?
+  complexity  String?
+  tests       String?
+  createdAt   DateTime @default(now())
+  shareLink   ShareLink?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ShareLink {
+  id            String   @id @default(uuid())
+  userId        String
+  conversionId  String   @unique
+  createdAt     DateTime @default(now())
+  isPublic      Boolean  @default(true)
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversion Conversion @relation(fields: [conversionId], references: [id], onDelete: Cascade)
+}
+
+model FileObject {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
