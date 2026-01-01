@@ -1,7 +1,7 @@
 {
   "version": 2,
   "builds": [{ "src": "package.json", "use": "@vercel/next" }],
-  "buildCommand": "npx prisma db push --accept-data-loss && next build",
+  "buildCommand": "npx prisma migrate deploy && next build",
   "env": {
     "NEXTAUTH_URL": "https://YOUR_VERSEL_DOMAIN",
     "NEXTAUTH_SECRET": "",
