@@ -26,7 +26,7 @@ export default function Home() {
   const [files, setFiles] = useState<{ id: string; name: string }[]>([])
   const [filesError, setFilesError] = useState('')
   const [dsaMode, setDsaMode] = useState(false)
-  const [liveMode, setLiveMode] = useState(true)
+  const [liveMode, setLiveMode] = useState(false)
   const [autoRun, setAutoRun] = useState(true)
   const [runOutput, setRunOutput] = useState('')
   const [history, setHistory] = useState<{ id?: string; sourceLang: string; targetLang: string; inputCode: string; outputCode: string; createdAt?: string }[]>([])
@@ -55,6 +55,7 @@ export default function Home() {
         setComplexity(saved.complexity || '')
         setTests(saved.tests || '')
         setDsaMode(!!saved.dsaMode)
+        setLiveMode(!!saved.liveMode)
       }
       const savedHist = JSON.parse(localStorage.getItem('rcm.history') || '[]')
       if (Array.isArray(savedHist)) setHistory(savedHist)
@@ -71,9 +72,9 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    const payload = { sourceLang, targetLang, inputCode, outputCode, explanation, complexity, tests, dsaMode }
+    const payload = { sourceLang, targetLang, inputCode, outputCode, explanation, complexity, tests, dsaMode, liveMode }
     try { localStorage.setItem('rcm.state', JSON.stringify(payload)) } catch {}
-  }, [sourceLang, targetLang, inputCode, outputCode, explanation, complexity, tests, dsaMode])
+  }, [sourceLang, targetLang, inputCode, outputCode, explanation, complexity, tests, dsaMode, liveMode])
 
   useEffect(() => {
     (async () => {
@@ -136,6 +137,9 @@ export default function Home() {
 
   useEffect(() => {
     if (!liveMode) return
+    const trimmed = (inputCode || '').trim()
+    if (!trimmed) return
+    if (trimmed.startsWith('// Paste code here')) return
     const controller = new AbortController()
     const t = setTimeout(async () => {
       setLoading(true)
@@ -153,7 +157,6 @@ export default function Home() {
         setTests(data.tests ?? '')
       } catch (e: any) {
         if (e?.name !== 'AbortError') {
-          // ignore other errors for live mode
         }
       } finally {
         setLoading(false)
@@ -358,21 +361,28 @@ export default function Home() {
             toast.show('Share link copied')
           }} className="bg-purple-600">Share</Button>
           </div>
-          <Editor
-            height="50vh"
-            language={targetLang}
-            theme="vs-dark"
-            value={outputCode}
-            beforeMount={() => {
-              try {
-                const req: any = (window as any).require
-                if (req && typeof req.config === 'function') {
-                  req.config({ paths: { stackframe: 'https://cdn.jsdelivr.net/npm/stackframe@1.3.4/stackframe.min', 'error-stack-parser': 'https://cdn.jsdelivr.net/npm/error-stack-parser@2.1.4/dist/error-stack-parser.min' } })
-                }
-              } catch {}
-            }}
-            options={{ readOnly: true, minimap: { enabled: false } }}
-          />
+          <div className="relative">
+            <Editor
+              height="50vh"
+              language={targetLang}
+              theme="vs-dark"
+              value={outputCode}
+              beforeMount={() => {
+                try {
+                  const req: any = (window as any).require
+                  if (req && typeof req.config === 'function') {
+                    req.config({ paths: { stackframe: 'https://cdn.jsdelivr.net/npm/stackframe@1.3.4/stackframe.min', 'error-stack-parser': 'https://cdn.jsdelivr.net/npm/error-stack-parser@2.1.4/dist/error-stack-parser.min' } })
+                  }
+                } catch {}
+              }}
+              options={{ readOnly: true, minimap: { enabled: false } }}
+            />
+            {!outputCode && (
+              <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400 pointer-events-none">
+                Converted code appears here
+              </div>
+            )}
+          </div>
           <div className="p-2 text-sm border-t bg-white/50 dark:bg-black/20 space-y-2">
             <div>
               <div className="font-semibold mb-1">Run Output {!(targetLang === 'javascript' || targetLang === 'python') && '(JS/Python only)'}

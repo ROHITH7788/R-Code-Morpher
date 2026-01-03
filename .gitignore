@@ -7,3 +7,4 @@ dev.db
 *.log
 
 .env*
+tsconfig.tsbuildinfo
