@@ -5,7 +5,5 @@ export default withAuth({
 })
 
 export const config = {
-  matcher: [
-    '/((?!_next|api|login|signup|reset|favicon.ico).*)',
-  ],
+  matcher: ['/dashboard'],
 }

@@ -4,5 +4,7 @@
 
 html, body, :root { height: 100%; }
 
-.pane { @apply p-2 h-full; }
-
+.pane {
+  padding: 0.5rem;   /* p-2 */
+  height: 100%;      /* h-full */
+}
