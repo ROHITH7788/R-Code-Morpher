@@ -1,6 +1,6 @@
 {
   "version": 2,
   "builds": [{ "src": "package.json", "use": "@vercel/next" }],
-  "buildCommand": "npx prisma db push --accept-data-loss && next build",
+  "buildCommand": "next build",
   "env": {}
 }
