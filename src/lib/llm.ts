@@ -108,13 +108,167 @@ function denormalizePrints(lang: string, code: string) {
   return code.replace(/__PRINT__\(([^)]+)\)/g, (_, a) => toPrint(lang, a))
 }
 
+function basicConvert(sourceLang: string, targetLang: string, inputCode: string) {
+  if (sourceLang === targetLang) return { outputCode: inputCode, explanation: 'Source and target are the same.' }
+  if (sourceLang === 'java' && targetLang === 'python') {
+    const lines = inputCode.split(/\r?\n/)
+    let out: string[] = []
+    let indent = 0
+    const push = (s: string) => out.push('  '.repeat(indent) + s)
+    const mainLines: string[] = []
+    for (let raw of lines) {
+      let line = raw.trim()
+      if (!line) { push(''); continue }
+      line = line.replace(/^import\s+.+;$/, '')
+      line = line.replace(/^package\s+.+;$/, '')
+      if (/class\s+\w+/.test(line)) { continue }
+      line = line.replace(/System\.out\.println\s*\(/g, 'print(')
+      line = line.replace(/;\s*$/g, '')
+      line = line.replace(/^\s*(public|private|protected)\s+static\s+void\s+main\s*\(\s*String\[\]\s*\w+\s*\)\s*\{?\s*$/i, 'def main():')
+      line = line.replace(/^\s*(public|private|protected)?\s*(static)?\s*(void|int|double|float|char|boolean|long|short|byte)\s+(\w+)\s*\(([^)]*)\)\s*\{?\s*$/i, (_m, _a, _b, _ret, name, args) => {
+        const a = (args || '').replace(/\b(int|double|float|char|boolean|long|short|byte|String)\b\s+/g, '').trim()
+        return `def ${name}(${a}):`
+      })
+      line = line.replace(/^\s*for\s*\(\s*int\s+(\w+)\s*=\s*(\d+)\s*;\s*\1\s*<\s*(\w+)\s*;\s*\1\+\+\s*\)\s*\{?\s*$/i, (_m, v, start, end) => `for ${v} in range(${start}, ${end}):`)
+      line = line.replace(/^\s*if\s*\((.+)\)\s*\{?\s*$/i, (_m, cond) => `if ${cond}:`)
+      line = line.replace(/^\s*else\s*\{?\s*$/i, 'else:')
+      const opens = (line.match(/\{/g) || []).length
+      const closes = (line.match(/\}/g) || []).length
+      if (closes > 0) indent = Math.max(0, indent - closes)
+      const cleaned = line.replace(/\{/g, '').replace(/\}/g, '')
+      if (/def\s+main\s*\(\s*\)\s*:\s*$/.test(cleaned)) {
+        push(cleaned)
+        mainLines.push('if __name__ == "__main__":')
+        mainLines.push('  main()')
+        indent = 1
+        continue
+      }
+      push(cleaned)
+      if (opens > closes) indent += opens - closes
+    }
+    if (mainLines.length > 0) out = out.concat(mainLines)
+    const result = out.join('\n').replace(/\n{3,}/g, '\n\n')
+    return { outputCode: result, explanation: 'Heuristic Java→Python conversion: println→print, method→def, braces→indent.' }
+  }
+  if (sourceLang === 'javascript' && targetLang === 'python') {
+    let out = inputCode
+    out = out.replace(/console\.log\s*\(/g, 'print(')
+    out = out.replace(/\b(let|const)\s+/g, '')
+    out = out.replace(/;\s*$/gm, '')
+    out = out.replace(/function\s+(\w+)\s*\(([^)]*)\)\s*\{/g, (m, name, args) => `def ${name}(${args}):`)
+    out = out.replace(/=>\s*\{/g, ':')
+    out = out.replace(/\{\s*$/gm, ':')
+    out = out.replace(/\}/g, '')
+    return { outputCode: out, explanation: 'Heuristic JS→Python conversion: logs→print, functions→def, removed semicolons and braces.' }
+  }
+  if (sourceLang === 'php' && targetLang === 'python') {
+    let out = inputCode
+    out = out.replace(/<\?php/g, '')
+    out = out.replace(/\?>/g, '')
+    out = out.replace(/echo\s+(.+);?/g, (_, a) => `print(${a})`)
+    out = out.replace(/;\s*$/gm, '')
+    return { outputCode: out.trim(), explanation: 'Heuristic PHP→Python conversion: removed PHP tags, echo→print, removed semicolons.' }
+  }
+  if (sourceLang === 'typescript' && targetLang === 'python') {
+    let out = inputCode
+    out = out.replace(/console\.log\s*\(/g, 'print(')
+    out = out.replace(/\b(let|const)\s+(\w+)\s*:\s*[^=]+=\s*/g, (_m, _kw, name) => `${name} = `)
+    out = out.replace(/\b(let|const)\s+/g, '')
+    out = out.replace(/\s+as\s+[A-Za-z0-9_<>\[\]\|?.]+/g, '')
+    out = out.replace(/^\s*(interface|type)\s+.+$/gm, '')
+    out = out.replace(/function\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*[^ {]+)?\s*\{/g, (_m, name, args) => {
+      const a = (args || '').replace(/\b(\w+)\s*:\s*[^,)\s]+/g, '$1')
+      return `def ${name}(${a}):`
+    })
+    out = out.replace(/const\s+(\w+)\s*(?::\s*[^=]+)?\s*=\s*\(([^)]*)\)\s*(?::\s*[^=]+)?\s*=>\s*\{/g, (_m, name, args) => {
+      const a = (args || '').replace(/\b(\w+)\s*:\s*[^,)\s]+/g, '$1')
+      return `def ${name}(${a}):`
+    })
+    out = out.replace(/;\s*$/gm, '')
+    out = out.replace(/\{\s*$/gm, ':')
+    out = out.replace(/=>\s*\{/g, ':')
+    out = out.replace(/\}/g, '')
+    return { outputCode: out, explanation: 'Heuristic TS→Python conversion: logs→print, remove types, functions→def, removed semicolons and braces.' }
+  }
+  if (sourceLang === 'csharp' && targetLang === 'python') {
+    const pre = inputCode.replace(/\{/g, '{\n').replace(/\}/g, '\n}')
+    const lines = pre.split(/\r?\n/)
+    let out: string[] = []
+    let indent = 0
+    const push = (s: string) => out.push('  '.repeat(indent) + s)
+    const mainLines: string[] = []
+    for (let raw of lines) {
+      let line = raw.trim()
+      if (!line) { push(''); continue }
+      line = line.replace(/^using\s+.+;$/, '')
+      line = line.replace(/^namespace\s+.+\s*\{?$/, '')
+      if (/class\s+\w+/.test(line)) { continue }
+      line = line.replace(/Console\.Write(Line)?\s*\(/g, 'print(')
+      line = line.replace(/;\s*$/g, '')
+      line = line.replace(/^\s*(public|private|protected)?\s*(static)?\s*void\s+Main\s*\(\s*\)\s*\{?\s*$/i, 'def main():')
+      line = line.replace(/^\s*(public|private|protected)?\s*(static)?\s*(void|int|double|float|char|bool|boolean|long|short|string|object|var)\s+(\w+)\s*\(([^)]*)\)\s*\{?\s*$/i,
+        (_m, _vis, _stat, _ret, name, args) => {
+          const a = (args || '').replace(/\b(int|double|float|char|bool|boolean|long|short|string|object|var)\b\s+/gi, '').replace(/\s*=\s*[^,)\s]+/g, '')
+          return `def ${name}(${a}):`
+        })
+      line = line.replace(/^\s*for\s*\(\s*(int|var)\s+(\w+)\s*=\s*(\d+)\s*;\s*\2\s*<\s*(\w+)\s*;\s*\2\+\+\s*\)\s*\{?\s*$/i,
+        (_m, _kw, v, start, end) => `for ${v} in range(${start}, ${end}):`)
+      line = line.replace(/^\s*if\s*\((.+)\)\s*\{?\s*$/i, (_m, cond) => `if ${cond}:`)
+      line = line.replace(/^\s*else\s*\{?\s*$/i, 'else:')
+      const opens = (line.match(/\{/g) || []).length
+      const closes = (line.match(/\}/g) || []).length
+      if (closes > 0) indent = Math.max(0, indent - closes)
+      const cleaned = line.replace(/\{/g, '').replace(/\}/g, '')
+      if (/def\s+main\s*\(\s*\)\s*:\s*$/.test(cleaned)) {
+        push(cleaned)
+        mainLines.push('if __name__ == "__main__":')
+        mainLines.push('  main()')
+        indent = 1
+        continue
+      }
+      if (cleaned) push(cleaned)
+      if (opens > closes) indent += opens - closes
+    }
+    if (mainLines.length > 0) out = out.concat(mainLines)
+    const result = out.join('\n').replace(/\n{3,}/g, '\n\n')
+    return { outputCode: result, explanation: 'Heuristic C#→Python conversion: WriteLine→print, method→def, braces→indent.' }
+  }
+  if (sourceLang === 'python' && targetLang === 'javascript') {
+    let out = inputCode
+    out = out.replace(/\bprint\s*\(/g, 'console.log(')
+    out = out.replace(/^def\s+(\w+)\s*\(([^)]*)\)\s*:\s*$/gm, (m, name, args) => `function ${name}(${args}) {`)
+    out = out.replace(/^\s{2,}(.+)/gm, (m, line) => line)
+    out = out.replace(/\n\s*$/g, '\n}')
+    return { outputCode: out, explanation: 'Heuristic Python→JS conversion: print→console.log, def→function with braces.' }
+  }
+  const s = inputCode
+  const normalized = normalizePrints(sourceLang, s)
+  const transformed = denormalizePrints(targetLang, normalized)
+  if (transformed !== s) {
+    const runnable = ensureRunnable(targetLang, transformed)
+    return { outputCode: runnable, explanation: 'Converted print statements to target language.' }
+  }
+  return { outputCode: inputCode, explanation: 'No reliable heuristic available for this pair without LLM.' }
+}
+
  
 
 export async function convertWithLLM(payload: { sourceLang: string; targetLang: string; inputCode: string; dsaMode?: boolean }) {
   const { sourceLang, targetLang, inputCode, dsaMode } = payload
   const key = process.env.OPENAI_API_KEY
+  let outputCode = ''
+  let explanation = ''
+  let complexity = 'unknown'
+  let tests = ''
+  let usedLLM = false
   if (!key) {
-    throw new Error('LLM_API_KEY_MISSING')
+    const fb = basicConvert(sourceLang, targetLang, inputCode)
+    const cleaned = postProcess(targetLang, fb.outputCode || '')
+    outputCode = cleaned
+    explanation = fb.explanation || ''
+    complexity = (fb as any).complexity || 'unknown'
+    tests = (fb as any).tests || ''
+    return { outputCode, explanation, complexity, tests, usedLLM }
   }
   try {
     const messages = [
@@ -133,7 +287,8 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
     const data1 = await chatCompletionWithRetry(key, messages, { json: true, temperature: 0.2, maxRetries: 5 })
     const content1 = data1.choices?.[0]?.message?.content
     const parsed = content1 ? JSON.parse(content1) : { outputCode: inputCode, explanation: 'No explanation.', complexity: 'unknown', tests: '' }
-    if (sourceLang !== targetLang && (parsed.outputCode || '').trim() === (inputCode || '').trim()) {
+    let candidate = postProcess(targetLang, parsed.outputCode || '')
+    if (sourceLang !== targetLang && candidate.trim() === (inputCode || '').trim()) {
       const messages2 = [
         { role: 'system', content: 'You strictly convert source into TARGET LANGUAGE. Never return the original source unchanged. Ensure runnable code: add imports, a main/entry if needed. Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.' },
         { role: 'user', content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}` },
@@ -141,8 +296,8 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
       const data2 = await chatCompletionWithRetry(key, messages2, { json: true, temperature: 0.2, maxRetries: 5 })
       const content2 = data2.choices?.[0]?.message?.content
       const parsed2 = content2 ? JSON.parse(content2) : parsed
-      const cleaned2 = postProcess(targetLang, parsed2.outputCode || '')
-      if (sourceLang !== targetLang && cleaned2.trim() === (inputCode || '').trim()) {
+      candidate = postProcess(targetLang, parsed2.outputCode || '')
+      if (sourceLang !== targetLang && candidate.trim() === (inputCode || '').trim()) {
         const messages3 = [
           { role: 'system', content: 'Strictly convert to TARGET LANGUAGE with runnable code. Never return the source unchanged. Return JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.' },
           { role: 'user', content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}` },
@@ -150,17 +305,29 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
         const data3 = await chatCompletionWithRetry(key, messages3, { json: true, temperature: 0.4, maxRetries: 5 })
         const content3 = data3.choices?.[0]?.message?.content
         const parsed3 = content3 ? JSON.parse(content3) : parsed2
-        const cleaned3 = postProcess(targetLang, parsed3.outputCode || '')
-        if (sourceLang !== targetLang && cleaned3.trim() === (inputCode || '').trim()) {
+        candidate = postProcess(targetLang, parsed3.outputCode || '')
+        if (sourceLang !== targetLang && candidate.trim() === (inputCode || '').trim()) {
           throw new Error('LLM_UNCHANGED_OUTPUT')
         }
-        return { ...parsed3, outputCode: cleaned3, usedLLM: true }
+        outputCode = candidate
+        explanation = parsed3.explanation || ''
+        complexity = parsed3.complexity || 'unknown'
+        tests = parsed3.tests || ''
+        usedLLM = true
+      } else {
+        outputCode = candidate
+        explanation = parsed2.explanation || ''
+        complexity = parsed2.complexity || 'unknown'
+        tests = parsed2.tests || ''
+        usedLLM = true
       }
-      const cleanedOut2 = postProcess(targetLang, parsed2.outputCode || '')
-      return { ...parsed2, outputCode: cleanedOut2, usedLLM: true }
+    } else {
+      outputCode = candidate
+      explanation = parsed.explanation || ''
+      complexity = parsed.complexity || 'unknown'
+      tests = parsed.tests || ''
+      usedLLM = true
     }
-    const cleanedOut = postProcess(targetLang, parsed.outputCode || '')
-    return { ...parsed, outputCode: cleanedOut, usedLLM: true }
   } catch (e: any) {
     try {
       const messages3 = [
@@ -171,11 +338,22 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
       const content3 = data3.choices?.[0]?.message?.content
       const parsed3 = content3 ? JSON.parse(content3) : { outputCode: inputCode, explanation: 'No explanation.', complexity: 'unknown', tests: '' }
       const cleaned3 = postProcess(targetLang, parsed3.outputCode || '')
-      return { ...parsed3, outputCode: cleaned3, usedLLM: true }
+      outputCode = cleaned3
+      explanation = parsed3.explanation || ''
+      complexity = parsed3.complexity || 'unknown'
+      tests = parsed3.tests || ''
+      usedLLM = true
     } catch {
-      throw e
+      const fb = basicConvert(sourceLang, targetLang, inputCode)
+      const cleaned = postProcess(targetLang, fb.outputCode || '')
+      outputCode = cleaned
+      explanation = fb.explanation || ''
+      complexity = (fb as any).complexity || 'unknown'
+      tests = (fb as any).tests || ''
+      usedLLM = false
     }
   }
+  return { outputCode, explanation, complexity, tests, usedLLM }
 }
 
 function postProcess(lang: string, code: string) {

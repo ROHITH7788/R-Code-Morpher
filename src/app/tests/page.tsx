@@ -86,7 +86,7 @@ export default function TestsPage() {
           runOut = (rdata?.output ?? '').toString()
           runUsedLLM = !!rdata?.usedLLM
         } catch {}
-        const ok = res.ok && !!data?.usedLLM && !isSuspiciousSameCode(tc.s, tc.t, tc.code, out) && sanityCheck(tc.t, out) && (!!runOut ? (!!runOut.trim() && !!runUsedLLM) : true)
+        const ok = res.ok && !isSuspiciousSameCode(tc.s, tc.t, tc.code, out) && sanityCheck(tc.t, out) && (!!runOut ? !!runOut.trim() : true)
         setResults(cur => [...cur, { s: tc.s, t: tc.t, ok, usedLLM: !!data?.usedLLM, status: res.status, explanation: (data?.explanation ?? '').toString(), sample, runOut, runUsedLLM }])
       } catch (e: any) {
         setResults(cur => [...cur, { s: tc.s, t: tc.t, ok: false, usedLLM: false, status: 0, explanation: e?.message || 'Request failed', sample: '' }])
@@ -114,7 +114,7 @@ export default function TestsPage() {
           const data = await res.json()
           const out: string = (data?.outputCode ?? '').toString()
           const sample = out.length > 0 ? out.slice(0, Math.min(160, out.length)) : ''
-          const ok = res.ok && !!data?.usedLLM && !isSuspiciousSameCode(s, t, sampleCodeFor(s), out) && sanityCheck(t, out)
+          const ok = res.ok && !isSuspiciousSameCode(s, t, sampleCodeFor(s), out) && sanityCheck(t, out)
           setResults(cur => [...cur, { s, t, ok, usedLLM: !!data?.usedLLM, status: res.status, explanation: (data?.explanation ?? '').toString(), sample }])
         } catch (e: any) {
           setResults(cur => [...cur, { s, t, ok: false, usedLLM: false, status: 0, explanation: e?.message || 'Request failed', sample: '' }])
@@ -166,9 +166,14 @@ export default function TestsPage() {
       <div className="flex items-center gap-3">
         <Button onClick={runMatrix} disabled={matrixRunning || running}>{matrixRunning ? 'Matrix Running…' : `Run Matrix (${languages.length * (languages.length - 1)})`}</Button>
         <Button className="bg-orange-600" onClick={() => { stopRef.current = true }} disabled={!matrixRunning}>Stop</Button>
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
           Throttle ms
-          <input type="number" className="border rounded px-2 py-1 w-24" value={throttleMs} onChange={e => setThrottleMs(Math.max(0, Number(e.target.value) || 0))} />
+          <input
+            type="number"
+            className="border rounded px-2 py-1 w-24 bg-white text-gray-900 placeholder-gray-500 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-gray-600"
+            value={throttleMs}
+            onChange={e => setThrottleMs(Math.max(0, Number(e.target.value) || 0))}
+          />
         </label>
         <div className="text-xs text-gray-600">Large matrix runs are slow due to rate limits. Consider deploying with OPENAI_API_KEY.</div>
       </div>
@@ -208,7 +213,7 @@ export default function TestsPage() {
         </table>
       </div>
       <div className="text-xs text-gray-500">
-        LLM is required for all conversions. Set OPENAI_API_KEY to enable successful runs.
+        LLM improves accuracy. Set OPENAI_API_KEY to enable LLM-powered conversions.
       </div>
     </div>
   )

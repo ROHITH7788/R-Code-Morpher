@@ -52,7 +52,7 @@ export async function GET() {
         runOut = (r?.output ?? '').toString()
         runUsedLLM = !!r?.usedLLM
       } catch {}
-      const ok = !!(converted as any)?.usedLLM && !isSuspiciousSameCode(tc.s, tc.t, tc.code, out) && !!out.trim() && (!!runOut ? !!runOut.trim() : true)
+      const ok = !isSuspiciousSameCode(tc.s, tc.t, tc.code, out) && !!out.trim() && (!!runOut ? !!runOut.trim() : true)
       results.push({
         s: tc.s,
         t: tc.t,

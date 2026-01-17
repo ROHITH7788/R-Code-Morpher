@@ -16,13 +16,10 @@ export async function POST(req: Request) {
         await prisma.conversion.create({ data: { userId, sourceLang, targetLang, inputCode, outputCode, explanation, complexity, tests } })
       }
     } catch {}
-    if (!usedLLM) {
-      return NextResponse.json({ error: 'LLM_REQUIRED' }, { status: 400 })
-    }
     return NextResponse.json({ outputCode, explanation, complexity, tests, usedLLM })
   } catch (e: any) {
     const msg = (e?.message || '').toString()
-    const status = /LLM_API_KEY_MISSING|LLM_REQUIRED|LLM_UNCHANGED_OUTPUT/.test(msg) ? 400 : 500
+    const status = /LLM_API_KEY_MISSING|LLM_UNCHANGED_OUTPUT/.test(msg) ? 400 : 500
     return NextResponse.json({ error: msg || 'Conversion failed' }, { status })
   }
 }
