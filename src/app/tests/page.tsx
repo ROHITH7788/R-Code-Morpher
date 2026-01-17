@@ -86,7 +86,7 @@ export default function TestsPage() {
           runOut = (rdata?.output ?? '').toString()
           runUsedLLM = !!rdata?.usedLLM
         } catch {}
-        const ok = res.ok && !isSuspiciousSameCode(tc.s, tc.t, tc.code, out) && sanityCheck(tc.t, out) && (!!runOut ? !!runOut.trim() : true)
+        const ok = res.ok && !!data?.usedLLM && !isSuspiciousSameCode(tc.s, tc.t, tc.code, out) && sanityCheck(tc.t, out) && (!!runOut ? (!!runOut.trim() && !!runUsedLLM) : true)
         setResults(cur => [...cur, { s: tc.s, t: tc.t, ok, usedLLM: !!data?.usedLLM, status: res.status, explanation: (data?.explanation ?? '').toString(), sample, runOut, runUsedLLM }])
       } catch (e: any) {
         setResults(cur => [...cur, { s: tc.s, t: tc.t, ok: false, usedLLM: false, status: 0, explanation: e?.message || 'Request failed', sample: '' }])
@@ -114,7 +114,7 @@ export default function TestsPage() {
           const data = await res.json()
           const out: string = (data?.outputCode ?? '').toString()
           const sample = out.length > 0 ? out.slice(0, Math.min(160, out.length)) : ''
-          const ok = res.ok && !isSuspiciousSameCode(s, t, sampleCodeFor(s), out) && sanityCheck(t, out)
+          const ok = res.ok && !!data?.usedLLM && !isSuspiciousSameCode(s, t, sampleCodeFor(s), out) && sanityCheck(t, out)
           setResults(cur => [...cur, { s, t, ok, usedLLM: !!data?.usedLLM, status: res.status, explanation: (data?.explanation ?? '').toString(), sample }])
         } catch (e: any) {
           setResults(cur => [...cur, { s, t, ok: false, usedLLM: false, status: 0, explanation: e?.message || 'Request failed', sample: '' }])
@@ -208,7 +208,7 @@ export default function TestsPage() {
         </table>
       </div>
       <div className="text-xs text-gray-500">
-        Note: Rate limiting from the AI API may cause some cases to use heuristics instead of full conversions. Results are summarized with LLM usage.
+        LLM is required for all conversions. Set OPENAI_API_KEY to enable successful runs.
       </div>
     </div>
   )

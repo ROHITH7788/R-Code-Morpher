@@ -32,6 +32,8 @@ export default function Home() {
   const [history, setHistory] = useState<{ id?: string; sourceLang: string; targetLang: string; inputCode: string; outputCode: string; createdAt?: string }[]>([])
   const [pyReady, setPyReady] = useState(false)
   const [pyLoading, setPyLoading] = useState(false)
+  const [usedLLM, setUsedLLM] = useState(false)
+  const [runLoading, setRunLoading] = useState(false)
 
   const canRun = useMemo(() => {
     if (!outputCode) return false
@@ -125,6 +127,7 @@ export default function Home() {
     setExplanation(data.explanation ?? '')
     setComplexity(data.complexity ?? '')
     setTests(data.tests ?? '')
+    setUsedLLM(!!data.usedLLM)
     setLoading(false)
     toast.show('Conversion completed')
     const item = { sourceLang, targetLang, inputCode, outputCode: data.outputCode, createdAt: new Date().toISOString() }
@@ -155,6 +158,7 @@ export default function Home() {
         setExplanation(data.explanation ?? '')
         setComplexity(data.complexity ?? '')
         setTests(data.tests ?? '')
+        setUsedLLM(!!data.usedLLM)
       } catch (e: any) {
         if (e?.name !== 'AbortError') {
         }
@@ -211,24 +215,64 @@ export default function Home() {
       // @ts-ignore
       const py = (window as any).__pyodide
       if (!py) { setRunOutput('Python runtime unavailable'); return }
-      // capture prints
-      const wrapper = `import sys\nfrom js import console\nclass W:\n  def write(self,s):\n    if s.strip():\n      console.log(s)\n  def flush(self):\n    pass\nsys.stdout = W()\nsys.stderr = W()\n` + code
+      const logs: string[] = []
+      // @ts-ignore
+      ;(window as any).__pyPush = (s: any) => { try { if (s && String(s).trim()) logs.push(String(s)) } catch {} }
+      const wrapper =
+        [
+          'import sys',
+          'from js import __pyPush',
+          'class W:',
+          '  def write(self,s):',
+          '    if s.strip():',
+          '      __pyPush(s)',
+          '  def flush(self):',
+          '    pass',
+          'sys.stdout = W()',
+          'sys.stderr = W()',
+          'try:',
+          '  import builtins',
+          '  builtins.input = lambda *args, **kwargs: ""',
+          '  def _blocked_open(*args, **kwargs):',
+          '    raise OSError("file I/O disabled")',
+          '  builtins.open = _blocked_open',
+          'except Exception:',
+          '  pass',
+          code,
+        ].join('\\n')
       await py.runPythonAsync(wrapper)
+      setRunOutput(logs.join('\\n'))
     } catch (e: any) {
       setRunOutput(`Error: ${e?.message || String(e)}`)
     }
   }, [ensurePyodide])
 
+  const runOther = useCallback(async (code: string) => {
+    setRunOutput('')
+    setRunLoading(true)
+    try {
+      const res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lang: targetLang, code }) })
+      const data = await res.json()
+      const out = (data?.output ?? '').toString()
+      setRunOutput(out || '')
+    } catch (e: any) {
+      setRunOutput(`Error: ${e?.message || String(e)}`)
+    } finally {
+      setRunLoading(false)
+    }
+  }, [targetLang])
+
   useEffect(() => {
     if (!autoRun) return
-    if (!canRun) return
+    if (!outputCode) return
     if (targetLang === 'javascript') runJS(outputCode)
     else if (targetLang === 'python') runPython(outputCode)
-  }, [outputCode, targetLang, autoRun, runPython, canRun])
+    else runOther(outputCode)
+  }, [outputCode, targetLang, autoRun, runPython, runOther])
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 h-[80vh]">
-      <aside className="md:col-span-2 col-span-1 border rounded p-2 space-y-2">
+    <div className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 min-h-[75vh]">
+      <aside className="md:col-span-2 col-span-1 border rounded p-2 space-y-2 shadow-sm">
         <h2 className="font-semibold">Project Files</h2>
         {filesError && (
           <div className="text-xs text-gray-600">
@@ -297,7 +341,7 @@ export default function Home() {
           </ul>
         </div>
       </aside>
-      <div className="md:col-span-10 col-span-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="md:col-span-10 col-span-1 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
         <div className="border rounded overflow-hidden">
           <div className="flex items-center justify-between p-2 border-b bg-white/50 dark:bg-black/20">
             <div className="flex items-center gap-2">
@@ -353,6 +397,7 @@ export default function Home() {
             <Button onClick={() => { navigator.clipboard.writeText(outputCode); toast.show('Output copied') }}>Copy</Button>
             <Button className="bg-red-600" onClick={() => { setOutputCode(''); setExplanation(''); setComplexity(''); setTests(''); setRunOutput('') }}>Delete</Button>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /> Auto-run</label>
+            <div className="text-xs px-2 py-1 rounded border bg-accent-50 dark:bg-black/20">{usedLLM ? 'LLM' : 'Heuristic'}</div>
           </div>
           <Button onClick={async () => {
             const res = await fetch('/api/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inputCode, outputCode, sourceLang, targetLang }) })
@@ -385,14 +430,14 @@ export default function Home() {
           </div>
           <div className="p-2 text-sm border-t bg-white/50 dark:bg-black/20 space-y-2">
             <div>
-              <div className="font-semibold mb-1">Run Output {!(targetLang === 'javascript' || targetLang === 'python') && '(JS/Python only)'}
-              </div>
+              <div className="font-semibold mb-1">Run Output</div>
               <div className="flex items-center gap-2 mb-2">
-                {targetLang === 'javascript' && <Button onClick={() => runJS(outputCode)} disabled={!canRun}>Run</Button>}
-                {targetLang === 'python' && <Button onClick={() => runPython(outputCode)} disabled={!canRun || pyLoading}>{pyLoading ? 'Loading Python…' : 'Run'}</Button>}
+                {targetLang === 'javascript' && <Button onClick={() => runJS(outputCode)} disabled={!outputCode}>Run</Button>}
+                {targetLang === 'python' && <Button onClick={() => runPython(outputCode)} disabled={!outputCode || pyLoading}>{pyLoading ? 'Loading Python…' : 'Run'}</Button>}
+                {(targetLang !== 'javascript' && targetLang !== 'python') && <Button onClick={() => runOther(outputCode)} disabled={!outputCode || runLoading}>{runLoading ? (<><Spinner /> <span className="ml-2">Running</span></>) : 'Run'}</Button>}
                 <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /> Auto-run</label>
               </div>
-              <pre className="whitespace-pre-wrap min-h-[60px]">{runOutput}</pre>
+              <pre className="whitespace-pre-wrap min-h-[60px] max-h-40 overflow-auto">{runOutput}</pre>
             </div>
             <div>
               <div className="font-semibold mb-1">Explanation</div>

@@ -14,6 +14,7 @@ export default function NavBar() {
       <nav className="flex gap-4 items-center text-sm">
         <Link href="/" className="hover:underline" prefetch={false}>Convert</Link>
         <Link href="/dashboard" className="hover:underline" prefetch={false}>Dashboard</Link>
+        <Link href="/tests" className="hover:underline" prefetch={false}>Tests</Link>
         {user?.email ? (
           <button onClick={() => signOut({ callbackUrl: '/' })} className="px-3 py-1 border rounded">Sign out</button>
         ) : (
