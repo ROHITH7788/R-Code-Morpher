@@ -184,7 +184,6 @@ function basicConvert(sourceLang: string, targetLang: string, inputCode: string)
         return `if ${c}:`
       })
       line = line.replace(/^\s*else\s*\{?\s*$/i, 'else:')
-      // Java arrays → Python lists
       line = line.replace(
         /^\s*(int|double|float|boolean|long|short|byte|char|String)\s*\[\]\s+(\w+)\s*=\s*(?:new\s+)?\1\s*\[\s*([^\]]+)\s*\]\s*;?\s*$/i,
         (_m, type, name, size) => {
@@ -196,7 +195,6 @@ function basicConvert(sourceLang: string, targetLang: string, inputCode: string)
           return `${name} = [${def}] * ${size}`
         }
       )
-      // Handle already-incorrectly transformed forms like: "int[] arr = int[n]"
       line = line.replace(
         /^\s*(int|double|float|boolean|long|short|byte|char|String)\s*\[\]\s+(\w+)\s*=\s*\1\s*\[\s*([^\]]+)\s*\]\s*;?\s*$/i,
         (_m, type, name, size) => {
@@ -448,17 +446,13 @@ function postProcess(lang: string, code: string) {
     out = out.replace(/\b(\d+(?:\.\d+)?)[fFdD]\b/g, '$1')
     out = out.replace(/\b(\d+)[lL]\b/g, '$1')
     out = out.replace(/\btrue\b/gi, 'True').replace(/\bfalse\b/gi, 'False')
-    // Binary search mid uses integer division
     out = out.replace(/mid\s*=\s*\(\s*([^)]+?)\s*\)\s*\/\s*2/g, 'mid = ($1) // 2')
     out = out.replace(/mid\s*=\s*([^\n]+?)\s*\/\s*2/g, 'mid = ($1) // 2')
-    // Light spacing tidy-ups for common DSA patterns
     out = out.replace(/\s*-\s*/g, ' - ')
     out = out.replace(/\s*\+\s*/g, ' + ')
     out = out.replace(/\s*=\s*/g, ' = ')
     out = out.replace(/,\s*/g, ', ')
-    // Fix invalid C-style array declarations in Python outputs
     out = out.replace(/^\s*int\s+(\w+)\s*\[\]\s*=\s*(?:new\s+)?int\s*\[\s*([^\]]+)\s*\]\s*;?\s*$/gm, (_m, name, size) => `${name} = [0] * ${size}`)
-    // Ensure indentation inside Python blocks when missing
     const needsIndentFix = /def\s+main\s*\(\s*\)\s*:\s*\n\s*\w/.test(out)
     if (needsIndentFix) {
       const lines = out.split(/\r?\n/)
@@ -473,17 +467,27 @@ function postProcess(lang: string, code: string) {
       }
       out = outLines.join('\n')
     }
-    // Insert ar.sort() for binary search patterns to ensure correctness
-    if (/while\s+left\s*<=\s*right\s*:\s*\n[\s\S]*?ar\[(?:mid|left|right)\]/.test(out) && !/ar\.sort\s*\(\s*\)/.test(out)) {
-      const lines = out.split(/\r?\n/)
-      for (let i = 0; i < lines.length; i++) {
-        if (/^\s*tar\s*=\s*int\s*\(\s*input\s*\(\s*\)\s*\)\s*$/.test(lines[i])) {
-          const pad = (lines[i].match(/^\s*/) || [''])[0]
-          lines.splice(i + 1, 0, `${pad}ar.sort()`)
-          break
+    if (/while\s+left\s*<=\s*right\s*:\s*/.test(out)) {
+      const m = out.match(/([A-Za-z_]\w*)\s*\[\s*mid\s*\]/)
+      const arrName = m ? m[1] : null
+      const hasSort = arrName ? new RegExp(`\\b${arrName}\\.sort\\s*\\(\\s*\\)`).test(out) : /\b\w+\.sort\s*\(\s*\)/.test(out)
+      if (arrName && !hasSort) {
+        const lines = out.split(/\r?\n/)
+        for (let i = 0; i < lines.length; i++) {
+          if (/^\s*tar\s*=\s*int\s*\(\s*input\s*\(\s*\)\s*\)\s*$/.test(lines[i])) {
+            const pad = (lines[i].match(/^\s*/) || [''])[0]
+            lines.splice(i + 1, 0, `${pad}${arrName}.sort()`)
+            break
+          }
         }
+        out = lines.join('\n')
       }
-      out = lines.join('\n')
+    }
+    if (/def\s+main\s*\(\s*\)\s*:\s*/.test(out) && !/__name__\s*==\s*["']__main__["']/.test(out)) {
+      out = `${out}\n\nif __name__ == "__main__":\n    main()`
+    }
+    if (/def\s+main\s*\(\s*\)\s*:\s*/.test(out) && !/__name__\s*==\s*["']__main__["']/.test(out)) {
+      out = `${out}\n\nif __name__ == "__main__":\n    main()`
     }
   } else if (lang === 'javascript' || lang === 'typescript') {
     out = out.replace(/\bprint\s*\(/g, 'console.log(')
