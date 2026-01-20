@@ -468,23 +468,43 @@ function postProcess(lang: string, code: string) {
       out = outLines.join('\n')
     }
     if (/while\s+left\s*<=\s*right\s*:\s*/.test(out)) {
-      const m = out.match(/([A-Za-z_]\w*)\s*\[\s*mid\s*\]/)
-      const arrName = m ? m[1] : null
+      const matches = Array.from(out.matchAll(/\b([A-Za-z_]\w*)\s*\[\s*(?:mid|left|right|[^\]]+)\]/g))
+      const arrName = matches.length ? matches[0][1] : null
       const hasSort = arrName ? new RegExp(`\\b${arrName}\\.sort\\s*\\(\\s*\\)`).test(out) : /\b\w+\.sort\s*\(\s*\)/.test(out)
       if (arrName && !hasSort) {
         const lines = out.split(/\r?\n/)
+        let inserted = false
         for (let i = 0; i < lines.length; i++) {
-          if (/^\s*tar\s*=\s*int\s*\(\s*input\s*\(\s*\)\s*\)\s*$/.test(lines[i])) {
+          if (/^\s*(tar|target|key)\s*=\s*int\s*\(\s*input\s*\(\s*\)\s*\)\s*$/.test(lines[i])) {
             const pad = (lines[i].match(/^\s*/) || [''])[0]
             lines.splice(i + 1, 0, `${pad}${arrName}.sort()`)
+            inserted = true
             break
+          }
+        }
+        if (!inserted) {
+          for (let i = 0; i < lines.length; i++) {
+            if (/^\s*while\s+left\s*<=\s*right\s*:\s*$/.test(lines[i])) {
+              const pad = (lines[i].match(/^\s*/) || [''])[0]
+              lines.splice(i, 0, `${pad}${arrName}.sort()`)
+              inserted = true
+              break
+            }
+          }
+        }
+        if (!inserted) {
+          for (let i = 0; i < lines.length; i++) {
+            const re = new RegExp(`^\\s*${arrName}\\s*=\\s*\\[`)
+            if (re.test(lines[i])) {
+              const pad = (lines[i].match(/^\s*/) || [''])[0]
+              lines.splice(i + 1, 0, `${pad}${arrName}.sort()`)
+              inserted = true
+              break
+            }
           }
         }
         out = lines.join('\n')
       }
-    }
-    if (/def\s+main\s*\(\s*\)\s*:\s*/.test(out) && !/__name__\s*==\s*["']__main__["']/.test(out)) {
-      out = `${out}\n\nif __name__ == "__main__":\n    main()`
     }
     if (/def\s+main\s*\(\s*\)\s*:\s*/.test(out) && !/__name__\s*==\s*["']__main__["']/.test(out)) {
       out = `${out}\n\nif __name__ == "__main__":\n    main()`
