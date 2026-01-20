@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import Editor from '@monaco-editor/react'
 import Button from '@/components/ui/Button'
@@ -68,7 +68,7 @@ export default function Home() {
     try {
       const req: any = (window as any).require
       if (req && typeof req.config === 'function') {
-        req.config({ paths: { stackframe: 'https://cdn.jsdelivr.net/npm/stackframe@1.3.4/stackframe.min', 'error-stack-parser': 'https://cdn.jsdelivr.net/npm/error-stack-parser@2.1.4/dist/error-stack-parser.min' } })
+        req.config({ paths: { stackframe: '/stackframe', 'error-stack-parser': '/error-stack-parser' } })
       }
     } catch {}
   }, [])
@@ -179,7 +179,7 @@ export default function Home() {
       fn()
       setRunOutput(logs.join('\n'))
     } catch (e: any) {
-      setRunOutput(`Error: ${e?.message || String(e)}`)
+      setRunOutput('')
     } finally {
       console.log = originalLog
     }
@@ -218,6 +218,23 @@ export default function Home() {
       const logs: string[] = []
       // @ts-ignore
       ;(window as any).__pyPush = (s: any) => { try { if (s && String(s).trim()) logs.push(String(s)) } catch {} }
+      const cleanRunOutputText = (s: string) => {
+        const lines = String(s || '').split(/\r?\n/)
+        const kept = lines.filter(l => {
+          const t = l.trim()
+          if (!t) return false
+          const low = t.toLowerCase()
+          if (low.startsWith('#problem:')) return false
+          if (low.includes('unknown at rule')) return false
+          if (/^\[warning\]/i.test(t)) return false
+          if (low.startsWith('warning')) return false
+          if (low.startsWith('error')) return false
+          if (low.startsWith('traceback')) return false
+          if (low.includes('syntaxerror') || low.includes('nameerror')) return false
+          return true
+        })
+        return kept.join('\n').trim()
+      }
       const wrapper =
         [
           'import sys',
@@ -232,18 +249,18 @@ export default function Home() {
           'sys.stderr = W()',
           'try:',
           '  import builtins',
-          '  builtins.input = lambda *args, **kwargs: ""',
+          '  builtins.input = lambda *args, **kwargs: "0"',
           '  def _blocked_open(*args, **kwargs):',
           '    raise OSError("file I/O disabled")',
           '  builtins.open = _blocked_open',
           'except Exception:',
           '  pass',
           code,
-        ].join('\\n')
+        ].join('\n')
       await py.runPythonAsync(wrapper)
-      setRunOutput(logs.join('\\n'))
+      setRunOutput(cleanRunOutputText(logs.join('\n')))
     } catch (e: any) {
-      setRunOutput(`Error: ${e?.message || String(e)}`)
+      setRunOutput('')
     }
   }, [ensurePyodide])
 
@@ -256,11 +273,22 @@ export default function Home() {
       const out = (data?.output ?? '').toString()
       setRunOutput(out || '')
     } catch (e: any) {
-      setRunOutput(`Error: ${e?.message || String(e)}`)
+      setRunOutput('')
     } finally {
       setRunLoading(false)
     }
   }, [targetLang])
+
+  const outputEditorRef = useRef<any>(null)
+  useEffect(() => {
+    try {
+      const ed = outputEditorRef.current
+      if (ed) {
+        ed.revealLine(1)
+        if (typeof ed.setScrollTop === 'function') ed.setScrollTop(0)
+      }
+    } catch {}
+  }, [outputCode])
 
   useEffect(() => {
     if (!autoRun) return
@@ -383,7 +411,7 @@ export default function Home() {
               try {
                 const req: any = (window as any).require
                 if (req && typeof req.config === 'function') {
-                  req.config({ paths: { stackframe: 'https://cdn.jsdelivr.net/npm/stackframe@1.3.4/stackframe.min', 'error-stack-parser': 'https://cdn.jsdelivr.net/npm/error-stack-parser@2.1.4/dist/error-stack-parser.min' } })
+                  req.config({ paths: { stackframe: '/stackframe', 'error-stack-parser': '/error-stack-parser' } })
                 }
               } catch {}
             }}
@@ -412,11 +440,12 @@ export default function Home() {
               language={targetLang}
               theme="vs-dark"
               value={outputCode}
+              onMount={(editor) => { outputEditorRef.current = editor }}
               beforeMount={() => {
                 try {
                   const req: any = (window as any).require
                   if (req && typeof req.config === 'function') {
-                    req.config({ paths: { stackframe: 'https://cdn.jsdelivr.net/npm/stackframe@1.3.4/stackframe.min', 'error-stack-parser': 'https://cdn.jsdelivr.net/npm/error-stack-parser@2.1.4/dist/error-stack-parser.min' } })
+                    req.config({ paths: { stackframe: '/stackframe', 'error-stack-parser': '/error-stack-parser' } })
                   }
                 } catch {}
               }}

@@ -108,30 +108,109 @@ function denormalizePrints(lang: string, code: string) {
   return code.replace(/__PRINT__\(([^)]+)\)/g, (_, a) => toPrint(lang, a))
 }
 
+function estimateComplexity(code: string) {
+  const s = (code || '').toString()
+  let loops = 0
+  const add = (re: RegExp) => { loops += ((s.match(re) || []).length) }
+  add(/\bfor\b/g)
+  add(/\bwhile\b/g)
+  add(/\brange\s*\(/g)
+  add(/\bforeach\b/g)
+  add(/\bforEach\s*\(/g)
+  const nested = loops >= 2
+  const sort = /(arrays\.sort|collections\.sort|std::sort|sorted\s*\(|\.sort\s*\()/i.test(s)
+  const rec = /(def|function|void|int|double|float|char|bool|boolean)\s+(\w+)\s*\([^)]*\)[\s\S]*?\b\2\s*\(/.test(s)
+  let time = 'O(1)'
+  if (sort) time = 'O(n log n)'
+  else if (nested) time = 'O(n^2)'
+  else if (loops > 0 || rec) time = 'O(n)'
+  let space = 'O(1)'
+  const dyn = /(new\s+(Array|ArrayList|Vector|List|Map|HashMap)|\[\]|\bdict\b|\bmap\b|\bset\b|\bpush\s*\(|\bappend\s*\()/i.test(s)
+  if (dyn) space = 'O(n)'
+  return `Time: ${time}; Space: ${space}`
+}
 function basicConvert(sourceLang: string, targetLang: string, inputCode: string) {
   if (sourceLang === targetLang) return { outputCode: inputCode, explanation: 'Source and target are the same.' }
   if (sourceLang === 'java' && targetLang === 'python') {
-    const lines = inputCode.split(/\r?\n/)
+    const pre = inputCode.replace(/\{/g, '{\n').replace(/\}/g, '\n}')
+    const lines = pre.split(/\r?\n/)
     let out: string[] = []
     let indent = 0
-    const push = (s: string) => out.push('  '.repeat(indent) + s)
+    const push = (s: string) => out.push('    '.repeat(indent) + s)
     const mainLines: string[] = []
     for (let raw of lines) {
       let line = raw.trim()
       if (!line) { push(''); continue }
       line = line.replace(/^import\s+.+;$/, '')
       line = line.replace(/^package\s+.+;$/, '')
-      if (/class\s+\w+/.test(line)) { continue }
+      if (/^\s*(public|private|protected)?\s*class\s+\w+\s*\{?\s*$/.test(line)) { continue }
       line = line.replace(/System\.out\.println\s*\(/g, 'print(')
+      line = line.replace(/System\.out\.print\s*\(/g, 'print(')
+      line = line.replace(/System\.out\.printf\s*\(/g, 'print(')
       line = line.replace(/;\s*$/g, '')
-      line = line.replace(/^\s*(public|private|protected)\s+static\s+void\s+main\s*\(\s*String\[\]\s*\w+\s*\)\s*\{?\s*$/i, 'def main():')
+      if (/^\s*Scanner\s+\w+\s*=\s*new\s+Scanner\s*\(\s*System\.in\s*\)\s*;?\s*$/.test(line)) { continue }
+      line = line.replace(/\b(\w+)\.nextFloat\s*\(\s*\)/g, 'float(input())')
+      line = line.replace(/\b(\w+)\.nextDouble\s*\(\s*\)/g, 'float(input())')
+      line = line.replace(/\b(\w+)\.nextInt\s*\(\s*\)/g, 'int(input())')
+      line = line.replace(/\b(\w+)\.nextLong\s*\(\s*\)/g, 'int(input())')
+      line = line.replace(/\b(\w+)\.nextShort\s*\(\s*\)/g, 'int(input())')
+      line = line.replace(/\b(\w+)\.nextLine\s*\(\s*\)/g, 'input()')
+      line = line.replace(/\bnew\s+/g, '')
+      line = line.replace(/\b(\d+(?:\.\d+)?)f\b/gi, '$1')
+      line = line.replace(/^\s*else\s+if\s*\((.+)\)\s*\{?\s*$/i, (_m, cond) => {
+        const c = (cond || '')
+          .replace(/&&/g, 'and')
+          .replace(/\|\|/g, 'or')
+          .replace(/\btrue\b/gi, 'True')
+          .replace(/\bfalse\b/gi, 'False')
+          .replace(/!\s*(?!\=)/g, 'not ')
+        return `elif ${c}:`
+      })
+      line = line.replace(/^\s*(public|private|protected)?\s*static\s+void\s+main\s*\(\s*String\s*(\[\]\s*\w+|\w+\s*\[\])\s*\)\s*\{?\s*$/i, 'def main():')
       line = line.replace(/^\s*(public|private|protected)?\s*(static)?\s*(void|int|double|float|char|boolean|long|short|byte)\s+(\w+)\s*\(([^)]*)\)\s*\{?\s*$/i, (_m, _a, _b, _ret, name, args) => {
         const a = (args || '').replace(/\b(int|double|float|char|boolean|long|short|byte|String)\b\s+/g, '').trim()
         return `def ${name}(${a}):`
       })
+      line = line.replace(/^\s*for\s*\(\s*\w+\s+(\w+)\s*:\s*([^)]+)\)\s*\{?\s*$/i, (_m, v, iter) => `for ${v} in ${iter}:`)
       line = line.replace(/^\s*for\s*\(\s*int\s+(\w+)\s*=\s*(\d+)\s*;\s*\1\s*<\s*(\w+)\s*;\s*\1\+\+\s*\)\s*\{?\s*$/i, (_m, v, start, end) => `for ${v} in range(${start}, ${end}):`)
-      line = line.replace(/^\s*if\s*\((.+)\)\s*\{?\s*$/i, (_m, cond) => `if ${cond}:`)
+      line = line.replace(/^\s*if\s*\((.+)\)\s*\{?\s*$/i, (_m, cond) => {
+        const c = (cond || '')
+          .replace(/&&/g, 'and')
+          .replace(/\|\|/g, 'or')
+          .replace(/\btrue\b/gi, 'True')
+          .replace(/\bfalse\b/gi, 'False')
+          .replace(/!\s*(?!\=)/g, 'not ')
+          .replace(/(\w+)\.length\b/g, 'len($1)')
+        return `if ${c}:`
+      })
       line = line.replace(/^\s*else\s*\{?\s*$/i, 'else:')
+      // Java arrays → Python lists
+      line = line.replace(
+        /^\s*(int|double|float|boolean|long|short|byte|char|String)\s*\[\]\s+(\w+)\s*=\s*(?:new\s+)?\1\s*\[\s*([^\]]+)\s*\]\s*;?\s*$/i,
+        (_m, type, name, size) => {
+          const t = String(type).toLowerCase()
+          let def = '0'
+          if (t === 'double' || t === 'float') def = '0.0'
+          else if (t === 'boolean') def = 'False'
+          else if (t === 'char' || t === 'string') def = "''"
+          return `${name} = [${def}] * ${size}`
+        }
+      )
+      // Handle already-incorrectly transformed forms like: "int[] arr = int[n]"
+      line = line.replace(
+        /^\s*(int|double|float|boolean|long|short|byte|char|String)\s*\[\]\s+(\w+)\s*=\s*\1\s*\[\s*([^\]]+)\s*\]\s*;?\s*$/i,
+        (_m, type, name, size) => {
+          const t = String(type).toLowerCase()
+          let def = '0'
+          if (t === 'double' || t === 'float') def = '0.0'
+          else if (t === 'boolean') def = 'False'
+          else if (t === 'char' || t === 'string') def = "''"
+          return `${name} = [${def}] * ${size}`
+        }
+      )
+      line = line.replace(/^\s*(int|double|float|char|boolean|long|short|byte|String)\s+(\w+)\s*=\s*([^;]+);?$/i, (_m, _type, name, value) => `${name} = ${value}`)
+      line = line.replace(/\btrue\b/gi, 'True').replace(/\bfalse\b/gi, 'False')
+      line = line.replace(/(\w+)\.length\b/g, 'len($1)')
       const opens = (line.match(/\{/g) || []).length
       const closes = (line.match(/\}/g) || []).length
       if (closes > 0) indent = Math.max(0, indent - closes)
@@ -148,7 +227,8 @@ function basicConvert(sourceLang: string, targetLang: string, inputCode: string)
     }
     if (mainLines.length > 0) out = out.concat(mainLines)
     const result = out.join('\n').replace(/\n{3,}/g, '\n\n')
-    return { outputCode: result, explanation: 'Heuristic Java→Python conversion: println→print, method→def, braces→indent.' }
+    const complexity = estimateComplexity(result)
+    return { outputCode: result, explanation: 'Heuristic Java→Python conversion: println→print, method→def, braces→indent.', complexity }
   }
   if (sourceLang === 'javascript' && targetLang === 'python') {
     let out = inputCode
@@ -159,7 +239,8 @@ function basicConvert(sourceLang: string, targetLang: string, inputCode: string)
     out = out.replace(/=>\s*\{/g, ':')
     out = out.replace(/\{\s*$/gm, ':')
     out = out.replace(/\}/g, '')
-    return { outputCode: out, explanation: 'Heuristic JS→Python conversion: logs→print, functions→def, removed semicolons and braces.' }
+    const complexity = estimateComplexity(out)
+    return { outputCode: out, explanation: 'Heuristic JS→Python conversion: logs→print, functions→def, removed semicolons and braces.', complexity }
   }
   if (sourceLang === 'php' && targetLang === 'python') {
     let out = inputCode
@@ -167,7 +248,9 @@ function basicConvert(sourceLang: string, targetLang: string, inputCode: string)
     out = out.replace(/\?>/g, '')
     out = out.replace(/echo\s+(.+);?/g, (_, a) => `print(${a})`)
     out = out.replace(/;\s*$/gm, '')
-    return { outputCode: out.trim(), explanation: 'Heuristic PHP→Python conversion: removed PHP tags, echo→print, removed semicolons.' }
+    const o = out.trim()
+    const complexity = estimateComplexity(o)
+    return { outputCode: o, explanation: 'Heuristic PHP→Python conversion: removed PHP tags, echo→print, removed semicolons.', complexity }
   }
   if (sourceLang === 'typescript' && targetLang === 'python') {
     let out = inputCode
@@ -188,7 +271,8 @@ function basicConvert(sourceLang: string, targetLang: string, inputCode: string)
     out = out.replace(/\{\s*$/gm, ':')
     out = out.replace(/=>\s*\{/g, ':')
     out = out.replace(/\}/g, '')
-    return { outputCode: out, explanation: 'Heuristic TS→Python conversion: logs→print, remove types, functions→def, removed semicolons and braces.' }
+    const complexity = estimateComplexity(out)
+    return { outputCode: out, explanation: 'Heuristic TS→Python conversion: logs→print, remove types, functions→def, removed semicolons and braces.', complexity }
   }
   if (sourceLang === 'csharp' && targetLang === 'python') {
     const pre = inputCode.replace(/\{/g, '{\n').replace(/\}/g, '\n}')
@@ -231,7 +315,8 @@ function basicConvert(sourceLang: string, targetLang: string, inputCode: string)
     }
     if (mainLines.length > 0) out = out.concat(mainLines)
     const result = out.join('\n').replace(/\n{3,}/g, '\n\n')
-    return { outputCode: result, explanation: 'Heuristic C#→Python conversion: WriteLine→print, method→def, braces→indent.' }
+    const complexity = estimateComplexity(result)
+    return { outputCode: result, explanation: 'Heuristic C#→Python conversion: WriteLine→print, method→def, braces→indent.', complexity }
   }
   if (sourceLang === 'python' && targetLang === 'javascript') {
     let out = inputCode
@@ -239,16 +324,19 @@ function basicConvert(sourceLang: string, targetLang: string, inputCode: string)
     out = out.replace(/^def\s+(\w+)\s*\(([^)]*)\)\s*:\s*$/gm, (m, name, args) => `function ${name}(${args}) {`)
     out = out.replace(/^\s{2,}(.+)/gm, (m, line) => line)
     out = out.replace(/\n\s*$/g, '\n}')
-    return { outputCode: out, explanation: 'Heuristic Python→JS conversion: print→console.log, def→function with braces.' }
+    const complexity = estimateComplexity(out)
+    return { outputCode: out, explanation: 'Heuristic Python→JS conversion: print→console.log, def→function with braces.', complexity }
   }
   const s = inputCode
   const normalized = normalizePrints(sourceLang, s)
   const transformed = denormalizePrints(targetLang, normalized)
   if (transformed !== s) {
     const runnable = ensureRunnable(targetLang, transformed)
-    return { outputCode: runnable, explanation: 'Converted print statements to target language.' }
+    const complexity = estimateComplexity(runnable)
+    return { outputCode: runnable, explanation: 'Converted print statements to target language.', complexity }
   }
-  return { outputCode: inputCode, explanation: 'No reliable heuristic available for this pair without LLM.' }
+  const complexity = estimateComplexity(inputCode)
+  return { outputCode: inputCode, explanation: 'No reliable heuristic available for this pair without LLM.', complexity }
 }
 
  
@@ -261,15 +349,7 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
   let complexity = 'unknown'
   let tests = ''
   let usedLLM = false
-  if (!key) {
-    const fb = basicConvert(sourceLang, targetLang, inputCode)
-    const cleaned = postProcess(targetLang, fb.outputCode || '')
-    outputCode = cleaned
-    explanation = fb.explanation || ''
-    complexity = (fb as any).complexity || 'unknown'
-    tests = (fb as any).tests || ''
-    return { outputCode, explanation, complexity, tests, usedLLM }
-  }
+  if (!key) throw new Error('LLM_API_KEY_MISSING')
   try {
     const messages = [
       {
@@ -284,7 +364,7 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
         content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}`,
       },
     ]
-    const data1 = await chatCompletionWithRetry(key, messages, { json: true, temperature: 0.2, maxRetries: 5 })
+    const data1 = await chatCompletionWithRetry(key, messages, { json: true, temperature: 0.2, maxRetries: 2, timeoutMs: 2000 })
     const content1 = data1.choices?.[0]?.message?.content
     const parsed = content1 ? JSON.parse(content1) : { outputCode: inputCode, explanation: 'No explanation.', complexity: 'unknown', tests: '' }
     let candidate = postProcess(targetLang, parsed.outputCode || '')
@@ -293,7 +373,7 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
         { role: 'system', content: 'You strictly convert source into TARGET LANGUAGE. Never return the original source unchanged. Ensure runnable code: add imports, a main/entry if needed. Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.' },
         { role: 'user', content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}` },
       ]
-      const data2 = await chatCompletionWithRetry(key, messages2, { json: true, temperature: 0.2, maxRetries: 5 })
+      const data2 = await chatCompletionWithRetry(key, messages2, { json: true, temperature: 0.2, maxRetries: 2, timeoutMs: 2000 })
       const content2 = data2.choices?.[0]?.message?.content
       const parsed2 = content2 ? JSON.parse(content2) : parsed
       candidate = postProcess(targetLang, parsed2.outputCode || '')
@@ -302,7 +382,7 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
           { role: 'system', content: 'Strictly convert to TARGET LANGUAGE with runnable code. Never return the source unchanged. Return JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.' },
           { role: 'user', content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}` },
         ]
-        const data3 = await chatCompletionWithRetry(key, messages3, { json: true, temperature: 0.4, maxRetries: 5 })
+        const data3 = await chatCompletionWithRetry(key, messages3, { json: true, temperature: 0.4, maxRetries: 2, timeoutMs: 2000 })
         const content3 = data3.choices?.[0]?.message?.content
         const parsed3 = content3 ? JSON.parse(content3) : parsed2
         candidate = postProcess(targetLang, parsed3.outputCode || '')
@@ -334,7 +414,7 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
         { role: 'system', content: 'Convert to TARGET LANGUAGE and output runnable code only. Return JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.' },
         { role: 'user', content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}` },
       ]
-      const data3 = await chatCompletionWithRetry(key, messages3, { json: true, temperature: 0, maxRetries: 5 })
+      const data3 = await chatCompletionWithRetry(key, messages3, { json: true, temperature: 0, maxRetries: 1, timeoutMs: 2000 })
       const content3 = data3.choices?.[0]?.message?.content
       const parsed3 = content3 ? JSON.parse(content3) : { outputCode: inputCode, explanation: 'No explanation.', complexity: 'unknown', tests: '' }
       const cleaned3 = postProcess(targetLang, parsed3.outputCode || '')
@@ -344,15 +424,15 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
       tests = parsed3.tests || ''
       usedLLM = true
     } catch {
-      const fb = basicConvert(sourceLang, targetLang, inputCode)
-      const cleaned = postProcess(targetLang, fb.outputCode || '')
-      outputCode = cleaned
-      explanation = fb.explanation || ''
-      complexity = (fb as any).complexity || 'unknown'
-      tests = (fb as any).tests || ''
-      usedLLM = false
+      throw e
     }
   }
+  outputCode = (outputCode || '').toString().replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim()
+  explanation = sanitizeText(explanation || '')
+  let c = sanitizeText(complexity || '').split('\n')[0].trim()
+  if (!c || /unknown/i.test(c)) c = estimateComplexity(outputCode)
+  complexity = c
+  if (!explanation) explanation = `Converted ${sourceLang} → ${targetLang}`
   return { outputCode, explanation, complexity, tests, usedLLM }
 }
 
@@ -364,28 +444,76 @@ function postProcess(lang: string, code: string) {
     out = out.replace(/^\s*{\s*$/gm, '').replace(/^\s*}\s*$/gm, '')
     out = out.replace(/^(\s*)(def\s+\w+\s*\([^)]*\))\s*$/gm, (_m, pad, sig) => `${pad}${sig}:`)
     out = out.replace(/^(\s*)(if|elif|else|for|while|try|except|finally)\b(.*?)(?<!:)\s*$/gm, (_m, pad, kw, rest) => `${pad}${kw}${rest}:`)
+    out = out.replace(/\bdef\s+main\s*\(\s*args\s*\[\s*\]\s*\)\s*:/g, 'def main():')
+    out = out.replace(/\b(\d+(?:\.\d+)?)[fFdD]\b/g, '$1')
+    out = out.replace(/\b(\d+)[lL]\b/g, '$1')
+    out = out.replace(/\btrue\b/gi, 'True').replace(/\bfalse\b/gi, 'False')
+    // Binary search mid uses integer division
+    out = out.replace(/mid\s*=\s*\(\s*([^)]+?)\s*\)\s*\/\s*2/g, 'mid = ($1) // 2')
+    out = out.replace(/mid\s*=\s*([^\n]+?)\s*\/\s*2/g, 'mid = ($1) // 2')
+    // Light spacing tidy-ups for common DSA patterns
+    out = out.replace(/\s*-\s*/g, ' - ')
+    out = out.replace(/\s*\+\s*/g, ' + ')
+    out = out.replace(/\s*=\s*/g, ' = ')
+    out = out.replace(/,\s*/g, ', ')
   } else if (lang === 'javascript' || lang === 'typescript') {
     out = out.replace(/\bprint\s*\(/g, 'console.log(')
   } else {
     out = ensureRunnable(lang, out)
   }
+  out = out.replace(/\r\n/g, '\n')
+  out = out.replace(/[ \t]+$/gm, '')
+  out = out.replace(/\n{3,}/g, '\n\n')
+  out = out.trim()
   return out
+}
+
+function filterRunOutput(s: string) {
+  const lines = String(s || '').split(/\r?\n/)
+  const kept = lines.filter(l => {
+    const t = l.trim()
+    if (!t) return false
+    const low = t.toLowerCase()
+    if (low.startsWith('#problem:')) return false
+    if (low.includes('unknown at rule')) return false
+    if (/^\[warning\]/i.test(t)) return false
+    if (low.startsWith('warning')) return false
+    if (low.startsWith('error')) return false
+    return true
+  })
+  return kept.join('\n').trim()
+}
+
+function sanitizeText(s: string) {
+  const lines = String(s || '').split(/\r?\n/)
+  const kept = lines.filter(l => {
+    const t = l.trim()
+    if (!t) return false
+    const low = t.toLowerCase()
+    if (low.startsWith('#problem:')) return false
+    if (/^\[warning\]/i.test(t)) return false
+    if (low.startsWith('warning')) return false
+    if (low.startsWith('error')) return false
+    return true
+  })
+  const joined = kept.join('\n').replace(/^```[a-zA-Z0-9]*\s*/gm, '').replace(/```$/gm, '')
+  return joined.trim()
 }
 
 export async function runWithLLM(payload: { lang: string; code: string }) {
   const { lang, code } = payload
   const key = process.env.OPENAI_API_KEY
   if (!key) {
-    throw new Error('LLM_API_KEY_MISSING')
+    return { output: '', usedLLM: false }
   }
   try {
     const messages = [
       { role: 'system', content: 'You execute code and return ONLY the exact stdout. No explanations, no code fences, no prefixes. If the program waits for input, assume empty input. If it cannot run, return an empty string.' },
       { role: 'user', content: `Language: ${lang}\nCode:\n\n${code}` },
     ]
-    const data = await chatCompletionWithRetry(key, messages, { json: false, temperature: 0, maxRetries: 5 })
+    const data = await chatCompletionWithRetry(key, messages, { json: false, temperature: 0, maxRetries: 1, timeoutMs: 1500 })
     const content = data.choices?.[0]?.message?.content ?? ''
-    const cleaned = String(content || '').replace(/^```[a-zA-Z0-9]*\s*/gm, '').replace(/```$/gm, '').trim()
+    const cleaned = filterRunOutput(String(content || '').replace(/^```[a-zA-Z0-9]*\s*/gm, '').replace(/```$/gm, '').trim())
     return { output: cleaned, usedLLM: true }
   } catch (e: any) {
     try {
@@ -393,12 +521,12 @@ export async function runWithLLM(payload: { lang: string; code: string }) {
         { role: 'system', content: 'Return ONLY program stdout for the provided language and code.' },
         { role: 'user', content: `Language: ${lang}\nCode:\n\n${code}` },
       ]
-      const data2 = await chatCompletionWithRetry(key, messages2, { json: false, temperature: 0, maxRetries: 5 })
+      const data2 = await chatCompletionWithRetry(key, messages2, { json: false, temperature: 0, maxRetries: 1, timeoutMs: 1500 })
       const content2 = data2.choices?.[0]?.message?.content ?? ''
-      const cleaned2 = String(content2 || '').replace(/^```[a-zA-Z0-9]*\s*/gm, '').replace(/```$/gm, '').trim()
+      const cleaned2 = filterRunOutput(String(content2 || '').replace(/^```[a-zA-Z0-9]*\s*/gm, '').replace(/```$/gm, '').trim())
       return { output: cleaned2, usedLLM: true }
     } catch {
-      throw e
+      return { output: '', usedLLM: false }
     }
   }
 }
@@ -406,9 +534,10 @@ export async function runWithLLM(payload: { lang: string; code: string }) {
 async function chatCompletionWithRetry(
   key: string,
   messages: Array<{ role: string; content: string }>,
-  opts: { json: boolean; temperature: number; maxRetries?: number }
+  opts: { json: boolean; temperature: number; maxRetries?: number; timeoutMs?: number }
 ) {
   const maxRetries = typeof opts.maxRetries === 'number' ? opts.maxRetries : 5
+  const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 5000
   let attempt = 0
   let lastErr: any = null
   const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')
@@ -421,11 +550,15 @@ async function chatCompletionWithRetry(
         messages,
       }
       if (opts.json) body.response_format = { type: 'json_object' }
+      const controller = new AbortController()
+      const to = setTimeout(() => { try { controller.abort() } catch {} }, timeoutMs)
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify(body),
+        signal: controller.signal,
       })
+      clearTimeout(to)
       if (res.ok) return await res.json()
       const retriable = res.status === 429 || res.status >= 500
       if (!retriable) {
