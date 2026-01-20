@@ -356,8 +356,23 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
         role: 'system',
         content:
           (dsaMode
-            ? 'You are an expert in data structures and algorithms. Convert the code to the TARGET LANGUAGE ONLY. Ensure the result compiles/runs as-is: add missing imports, standard entry points (e.g., main), and fix syntax automatically while preserving algorithmic correctness and time/space complexity. Use idiomatic data structures and standard libraries of the target language. For Python, use // for integer division and ensure valid syntax (no spaced operators like "< ="). Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}. The "outputCode" must be pure target-language code with no comments or text outside code. The "tests" must be target-language.'
-            : 'You are an expert software translator. Convert the code to the TARGET LANGUAGE ONLY. Ensure the result runs as-is: include necessary imports, standard entry points (e.g., main) and fix syntax automatically. Preserve functionality, use idiomatic patterns. For Python, use // for integer division. Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}. The "outputCode" must be pure target-language code with no mixed languages or explanations.')
+            ? 'You are an expert in data structures and algorithms. Convert the code to the TARGET LANGUAGE ONLY. \n' +
+              'FOLLOW THESE UNIVERSAL RULES FOR ACCURACY:\n' +
+              '1. RUNNABILITY: Ensure the result compiles and runs as-is. Include all necessary imports (e.g., math, bisect, collections, sys for Python; java.util.* for Java).\n' +
+              '2. ENTRY POINT: Always include a standard entry point (e.g., "if __name__ == \'__main__\': main()" for Python, public static void main for Java).\n' +
+              '3. DATA TYPES: Use idiomatic data structures (e.g., collections.deque for queues in Python, set() for HashSets).\n' +
+              '4. INTEGER DIVISION: In Python, always use // for integer division.\n' +
+              '5. SYNTAX CHECK: Ensure operators are correctly formatted (no " < =" instead of "<="). \n' +
+              '6. IO HANDLING: If the source uses standard input (Scanner, cin), use equivalent idiomatic input reading in the target.\n' +
+              '7. VERIFICATION: Before outputting, mentally run the code against the source logic to ensure parity.\n' +
+              'Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.'
+            : 'You are an expert software translator. Convert the code to the TARGET LANGUAGE ONLY. \n' +
+              'FOLLOW THESE UNIVERSAL RULES FOR ACCURACY:\n' +
+              '1. RUNNABILITY: Include all necessary imports and standard entry points.\n' +
+              '2. IDIOMATIC CODE: Use patterns native to the target language (e.g., list comprehensions in Python).\n' +
+              '3. INTEGER DIVISION: In Python, always use // for integer division.\n' +
+              '4. PARITY: Ensure every function and logic branch from the source is present in the target.\n' +
+              'Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.')
       },
       {
         role: 'user',
@@ -366,7 +381,41 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
     ]
     const data1 = await chatCompletionWithRetry(key, messages, { json: true, temperature: 0.2, maxRetries: 2, timeoutMs: convTimeout })
     const content1 = data1.choices?.[0]?.message?.content
-    const parsed = content1 ? JSON.parse(content1) : { outputCode: inputCode, explanation: 'No explanation.', complexity: 'unknown', tests: '' }
+    let parsed = content1 ? JSON.parse(content1) : { outputCode: inputCode, explanation: 'No explanation.', complexity: 'unknown', tests: '' }
+    
+    // Self-Correction Pass for Universal Accuracy
+    if (parsed.outputCode) {
+      const refinementMessages = [
+        {
+          role: 'system',
+          content: `You are a code reviewer. Review the following conversion from ${sourceLang} to ${targetLang}. \n` +
+                   `Fix any: \n` +
+                   `1. Syntax errors (especially indentation and colons in Python).\n` +
+                   `2. Missing imports.\n` +
+                   `3. Logical mismatches with the source.\n` +
+                   `4. Non-idiomatic code.\n` +
+                   `Return ONLY the corrected JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.`
+        },
+        {
+          role: 'user',
+          content: `Source Code (${sourceLang}):\n${inputCode}\n\nConverted Code (${targetLang}):\n${parsed.outputCode}`
+        }
+      ]
+      
+      try {
+        const dataRefined = await chatCompletionWithRetry(key, refinementMessages, { json: true, temperature: 0.1, maxRetries: 1, timeoutMs: convTimeout })
+        const contentRefined = dataRefined.choices?.[0]?.message?.content
+        if (contentRefined) {
+          const parsedRefined = JSON.parse(contentRefined)
+          if (parsedRefined.outputCode && parsedRefined.outputCode.trim() !== '') {
+            parsed = parsedRefined
+          }
+        }
+      } catch (e) {
+        console.error('Refinement pass failed, using original conversion:', e)
+      }
+    }
+
     let candidate = postProcess(targetLang, parsed.outputCode || '')
     if (sourceLang !== targetLang && candidate.trim() === (inputCode || '').trim()) {
       const messages2 = [
@@ -439,134 +488,64 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
 function postProcess(lang: string, code: string) {
   let out = (code || '').toString()
   out = out.replace(/^```[a-zA-Z0-9]*\s*/gm, '').replace(/```$/gm, '')
+
   if (lang === 'python') {
-    out = out.replace(/;\s*$/gm, '')
-    out = out.replace(/^\s*{\s*$/gm, '').replace(/^\s*}\s*$/gm, '')
-    out = out.replace(/^(\s*)(def\s+\w+\s*\([^)]*\))\s*$/gm, (_m, pad, sig) => `${pad}${sig}:`)
-    out = out.replace(/^(\s*)(if|elif|else|for|while|try|except|finally)\b(.*?)(?<!:)\s*$/gm, (_m, pad, kw, rest) => `${pad}${kw}${rest}:`)
-    out = out.replace(/\bdef\s+main\s*\(\s*args\s*\[\s*\]\s*\)\s*:/g, 'def main():')
-    out = out.replace(/\b(\d+(?:\.\d+)?)[fFdD]\b/g, '$1')
-    out = out.replace(/\b(\d+)[lL]\b/g, '$1')
-    out = out.replace(/\btrue\b/gi, 'True').replace(/\bfalse\b/gi, 'False')
-    out = out.replace(/<\s*=/g, '<=').replace(/>\s*=/g, '>=').replace(/!\s*=/g, '!=')
-    out = out.replace(/(?<![!<>])=\s*=/g, '==')
-    out = out.replace(/\)\s*\/\)\s*\/\//g, ') //')
-    out = out.replace(/mid\s*=\s*\(\s*([^)]+?)\s*\)\s*\/\s*2/g, 'mid = ($1) // 2')
-    out = out.replace(/mid\s*=\s*([^\n]+?)\s*\/\s*2/g, 'mid = ($1) // 2')
-    out = out.replace(/\s*-\s*/g, ' - ')
-    out = out.replace(/\s*\+\s*/g, ' + ')
-    out = out.replace(/\s*=\s*/g, ' = ')
-    out = out.replace(/,\s*/g, ', ')
-    out = out.replace(/^\s*int\s+(\w+)\s*\[\]\s*=\s*(?:new\s+)?int\s*\[\s*([^\]]+)\s*\]\s*;?\s*$/gm, (_m, name, size) => `${name} = [0] * ${size}`)
-    const needsIndentFix = /def\s+main\s*\(\s*\)\s*:\s*\n\s*\w/.test(out)
-    if (needsIndentFix) {
-      const lines = out.split(/\r?\n/)
-      let indent = 0
-      const outLines: string[] = []
-      for (let raw of lines) {
-        const t = raw.replace(/^\s+/, '')
-        if (!t) { outLines.push(''); continue }
-        if (/^(elif|else|except|finally)\b/.test(t)) indent = Math.max(0, indent - 1)
-        outLines.push('    '.repeat(indent) + t)
-        if (/^(def|class|if|elif|else|for|while|try|except|finally)\b.*:\s*$/.test(t)) indent++
+    // Basic Python sanitization
+    out = out.replace(/;\s*$/gm, '') // Remove semicolons
+    out = out.replace(/^\s*{\s*$/gm, '').replace(/^\s*}\s*$/gm, '') // Remove loose braces
+    
+    // Fix common syntax typos
+    out = out.replace(/\btrue\b/gi, 'True').replace(/\bfalse\b/gi, 'False').replace(/\bnull\b/gi, 'None')
+    out = out.replace(/\b(\d+(?:\.\d+)?)[fFdD]\b/g, '$1') // Remove float suffixes
+    out = out.replace(/\b(\d+)[lL]\b/g, '$1') // Remove long suffixes
+    
+    // Fix operator spacing
+    out = out.replace(/<\s*=/g, '<=').replace(/>\s*=/g, '>=').replace(/!\s*=/g, '!=').replace(/=\s*=/g, '==')
+    
+    // Ensure colons after blocks
+    out = out.replace(/^(\s*)(def|class|if|elif|else|for|while|try|except|finally)\b(.*?)(?<!:)\s*$/gm, '$1$2$3:')
+    
+    // Better indentation fixer
+    const lines = out.split(/\r?\n/)
+    let indentLevel = 0
+    const processedLines: string[] = []
+    const indentStep = '    '
+    
+    for (let line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) {
+        processedLines.push('')
+        continue
       }
-      out = outLines.join('\n')
-    }
-    // Generalize binary search sort insertion
-    if (/while\s+\w+\s*<=\s*\w+\s*:/.test(out)) {
-      const matches = Array.from(out.matchAll(/\b([A-Za-z_]\w*)\s*\[\s*(?:mid|left|right|start|end|low|high|[^\]]+)\]/g))
-      const arrName = matches.length ? matches[0][1] : null
-      const hasSort = arrName ? new RegExp(`\\b${arrName}\\.sort\\s*\\(\\s*\\)`).test(out) : /\b\w+\.sort\s*\(\s*\)/.test(out)
-      if (arrName && !hasSort) {
-        const lines = out.split(/\r?\n/)
-        let inserted = false
-        for (let i = 0; i < lines.length; i++) {
-          if (/^\s*(tar|target|key)\s*=\s*int\s*\(\s*input\s*\(\s*\)\s*\)\s*$/.test(lines[i])) {
-            const pad = (lines[i].match(/^\s*/) || [''])[0]
-            lines.splice(i + 1, 0, `${pad}${arrName}.sort()`)
-            inserted = true
-            break
-          }
-        }
-        if (!inserted) {
-          for (let i = 0; i < lines.length; i++) {
-            if (/^\s*while\s+\w+\s*<=\s*\w+\s*:\s*$/.test(lines[i])) {
-              const pad = (lines[i].match(/^\s*/) || [''])[0]
-              lines.splice(i, 0, `${pad}${arrName}.sort()`)
-              inserted = true
-              break
-            }
-          }
-        }
-        if (!inserted) {
-          for (let i = 0; i < lines.length; i++) {
-            const re = new RegExp(`^\\s*${arrName}\\s*=\\s*\\[`)
-            if (re.test(lines[i])) {
-              const pad = (lines[i].match(/^\s*/) || [''])[0]
-              lines.splice(i + 1, 0, `${pad}${arrName}.sort()`)
-              inserted = true
-              break
-            }
-          }
-        }
-        out = lines.join('\n')
+      
+      // Decrease indent for dedent keywords
+      if (/^(elif|else|except|finally)\b/.test(trimmed)) {
+        indentLevel = Math.max(0, indentLevel - 1)
+      }
+      
+      processedLines.push(indentStep.repeat(indentLevel) + trimmed)
+      
+      // Increase indent if line ends with a colon
+      if (trimmed.endsWith(':')) {
+        indentLevel++
+      } else if (/^(return|break|continue|raise|pass)\b/.test(trimmed)) {
+        // Optional: heuristic to decrease indent after terminal statements
+        // But this is risky without full parsing, so we'll rely on next lines dedenting
       }
     }
-    // Generalize move print outside loop
-    if (/^\s*while\s+\w+\s*<=\s*\w+\s*:\s*$/m.test(out)) {
-      const lines = out.split(/\r?\n/)
-      let i = 0
-      const toMove: Array<{ idx: number; text: string; indent: string; afterIdx: number; afterIndent: string }> = []
-      while (i < lines.length) {
-        const line = lines[i]
-        if (/^\s*while\s+\w+\s*<=\s*\w+\s*:\s*$/.test(line)) {
-          const whileIndent = (line.match(/^\s*/) || [''])[0]
-          let k = i + 1
-          let afterIdx = i + 1
-          while (k < lines.length) {
-            const curIndent = (lines[k].match(/^\s*/) || [''])[0]
-            const trimmed = lines[k].trim()
-            if (trimmed && curIndent.length <= whileIndent.length) { afterIdx = k; break }
-            if (/^\s*print\s*\(/.test(lines[k])) {
-              toMove.push({ idx: k, text: lines[k].trim(), indent: curIndent, afterIdx: -1, afterIndent: whileIndent })
-            }
-            k++
-            afterIdx = k
-          }
-          // assign afterIdx for recorded prints in this while block
-          for (let t of toMove) {
-            if (t.afterIdx === -1) t.afterIdx = afterIdx
-          }
-          i = k
-        } else {
-          i++
-        }
-      }
-      // Remove prints inside loops
-      for (let j = toMove.length - 1; j >= 0; j--) {
-        const rm = toMove[j]
-        lines.splice(rm.idx, 1)
-      }
-      // Insert prints after respective loops with loop-level indent
-      for (let m of toMove) {
-        const pad = m.afterIndent
-        lines.splice(m.afterIdx <= lines.length ? m.afterIdx : lines.length, 0, `${pad}${m.text}`)
-      }
-      out = lines.join('\n')
-    }
-    if (/def\s+main\s*\(\s*\)\s*:\s*/.test(out) && !/__name__\s*==\s*["']__main__["']/.test(out)) {
-      out = `${out}\n\nif __name__ == "__main__":\n    main()`
+    out = processedLines.join('\n')
+
+    // Add main guard if missing but main exists
+    if (out.includes('def main():') && !out.includes('if __name__ == "__main__":')) {
+      out += '\n\nif __name__ == "__main__":\n    main()'
     }
   } else if (lang === 'javascript' || lang === 'typescript') {
     out = out.replace(/\bprint\s*\(/g, 'console.log(')
   } else {
     out = ensureRunnable(lang, out)
   }
-  out = out.replace(/\r\n/g, '\n')
-  out = out.replace(/[ \t]+$/gm, '')
-  out = out.replace(/\n{3,}/g, '\n\n')
-  out = out.trim()
-  return out
+
+  return out.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 function filterRunOutput(s: string) {
