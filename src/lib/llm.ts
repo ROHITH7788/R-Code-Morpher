@@ -342,6 +342,8 @@ function basicConvert(sourceLang: string, targetLang: string, inputCode: string)
 export async function convertWithLLM(payload: { sourceLang: string; targetLang: string; inputCode: string; dsaMode?: boolean }) {
   const { sourceLang, targetLang, inputCode, dsaMode } = payload
   const key = process.env.OPENAI_API_KEY
+  const envConvTimeout = parseInt(String(process.env.LLM_TIMEOUT_MS || '').trim(), 10)
+  const convTimeout = Number.isFinite(envConvTimeout) && envConvTimeout > 0 ? envConvTimeout : 20000
   let outputCode = ''
   let explanation = ''
   let complexity = 'unknown'
@@ -362,7 +364,7 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
         content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}`,
       },
     ]
-    const data1 = await chatCompletionWithRetry(key, messages, { json: true, temperature: 0.2, maxRetries: 2, timeoutMs: 2000 })
+    const data1 = await chatCompletionWithRetry(key, messages, { json: true, temperature: 0.2, maxRetries: 2, timeoutMs: convTimeout })
     const content1 = data1.choices?.[0]?.message?.content
     const parsed = content1 ? JSON.parse(content1) : { outputCode: inputCode, explanation: 'No explanation.', complexity: 'unknown', tests: '' }
     let candidate = postProcess(targetLang, parsed.outputCode || '')
@@ -371,7 +373,7 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
         { role: 'system', content: 'You strictly convert source into TARGET LANGUAGE. Never return the original source unchanged. Ensure runnable code: add imports, a main/entry if needed. Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.' },
         { role: 'user', content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}` },
       ]
-      const data2 = await chatCompletionWithRetry(key, messages2, { json: true, temperature: 0.2, maxRetries: 2, timeoutMs: 2000 })
+      const data2 = await chatCompletionWithRetry(key, messages2, { json: true, temperature: 0.2, maxRetries: 2, timeoutMs: convTimeout })
       const content2 = data2.choices?.[0]?.message?.content
       const parsed2 = content2 ? JSON.parse(content2) : parsed
       candidate = postProcess(targetLang, parsed2.outputCode || '')
@@ -380,7 +382,7 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
           { role: 'system', content: 'Strictly convert to TARGET LANGUAGE with runnable code. Never return the source unchanged. Return JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.' },
           { role: 'user', content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}` },
         ]
-        const data3 = await chatCompletionWithRetry(key, messages3, { json: true, temperature: 0.4, maxRetries: 2, timeoutMs: 2000 })
+        const data3 = await chatCompletionWithRetry(key, messages3, { json: true, temperature: 0.4, maxRetries: 3, timeoutMs: convTimeout + 5000 })
         const content3 = data3.choices?.[0]?.message?.content
         const parsed3 = content3 ? JSON.parse(content3) : parsed2
         candidate = postProcess(targetLang, parsed3.outputCode || '')
@@ -412,7 +414,7 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
         { role: 'system', content: 'Convert to TARGET LANGUAGE and output runnable code only. Return JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}.' },
         { role: 'user', content: `Source language: ${sourceLang}\nTarget language: ${targetLang}\nCode:\n\n${inputCode}` },
       ]
-      const data3 = await chatCompletionWithRetry(key, messages3, { json: true, temperature: 0, maxRetries: 1, timeoutMs: 2000 })
+      const data3 = await chatCompletionWithRetry(key, messages3, { json: true, temperature: 0, maxRetries: 1, timeoutMs: Math.max(6000, Math.floor(convTimeout / 2)) })
       const content3 = data3.choices?.[0]?.message?.content
       const parsed3 = content3 ? JSON.parse(content3) : { outputCode: inputCode, explanation: 'No explanation.', complexity: 'unknown', tests: '' }
       const cleaned3 = postProcess(targetLang, parsed3.outputCode || '')
@@ -556,6 +558,8 @@ function sanitizeText(s: string) {
 export async function runWithLLM(payload: { lang: string; code: string }) {
   const { lang, code } = payload
   const key = process.env.OPENAI_API_KEY
+  const envRunTimeout = parseInt(String(process.env.LLM_RUN_TIMEOUT_MS || '').trim(), 10)
+  const runTimeout = Number.isFinite(envRunTimeout) && envRunTimeout > 0 ? envRunTimeout : 4000
   if (!key) {
     return { output: '', usedLLM: false }
   }
@@ -564,7 +568,7 @@ export async function runWithLLM(payload: { lang: string; code: string }) {
       { role: 'system', content: 'You execute code and return ONLY the exact stdout. No explanations, no code fences, no prefixes. If the program waits for input, assume empty input. If it cannot run, return an empty string.' },
       { role: 'user', content: `Language: ${lang}\nCode:\n\n${code}` },
     ]
-    const data = await chatCompletionWithRetry(key, messages, { json: false, temperature: 0, maxRetries: 1, timeoutMs: 1500 })
+    const data = await chatCompletionWithRetry(key, messages, { json: false, temperature: 0, maxRetries: 1, timeoutMs: runTimeout })
     const content = data.choices?.[0]?.message?.content ?? ''
     const cleaned = filterRunOutput(String(content || '').replace(/^```[a-zA-Z0-9]*\s*/gm, '').replace(/```$/gm, '').trim())
     return { output: cleaned, usedLLM: true }
@@ -574,7 +578,7 @@ export async function runWithLLM(payload: { lang: string; code: string }) {
         { role: 'system', content: 'Return ONLY program stdout for the provided language and code.' },
         { role: 'user', content: `Language: ${lang}\nCode:\n\n${code}` },
       ]
-      const data2 = await chatCompletionWithRetry(key, messages2, { json: false, temperature: 0, maxRetries: 1, timeoutMs: 1500 })
+      const data2 = await chatCompletionWithRetry(key, messages2, { json: false, temperature: 0, maxRetries: 1, timeoutMs: runTimeout })
       const content2 = data2.choices?.[0]?.message?.content ?? ''
       const cleaned2 = filterRunOutput(String(content2 || '').replace(/^```[a-zA-Z0-9]*\s*/gm, '').replace(/```$/gm, '').trim())
       return { output: cleaned2, usedLLM: true }

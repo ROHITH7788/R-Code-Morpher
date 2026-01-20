@@ -19,7 +19,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ outputCode, explanation, complexity, tests, usedLLM })
   } catch (e: any) {
     const msg = (e?.message || '').toString()
-    const status = /LLM_API_KEY_MISSING|LLM_UNCHANGED_OUTPUT/.test(msg) ? 400 : 500
+    const status =
+      /LLM_API_KEY_MISSING|LLM_UNCHANGED_OUTPUT/.test(msg)
+        ? 400
+        : /LLM error\s+401|invalid_api_key/i.test(msg)
+          ? 401
+          : /aborted|AbortError/i.test(msg)
+            ? 408
+          : 500
     return NextResponse.json({ error: msg || 'Conversion failed' }, { status })
   }
 }

@@ -117,36 +117,49 @@ export default function Home() {
   const toast = useToast()
   async function convert() {
     setLoading(true)
-    const res = await fetch('/api/convert', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sourceLang, targetLang, inputCode, dsaMode }),
-    })
-    const data = await res.json()
-    if (res.ok) {
-      const adv: AdvancedConversionResult = data
-      setOutputCode(adv.outputCode)
-      setExplanation(adv.explanation ?? '')
-      setComplexity(adv.complexity ?? '')
-      setTests(adv.tests ?? '')
-      setUsedLLM(!!adv.usedLLM)
-      toast.show('Conversion completed')
-      const item = { sourceLang, targetLang, inputCode, outputCode: adv.outputCode, createdAt: new Date().toISOString() }
-      setHistory(cur => {
-        const next = [item, ...cur].slice(0, 20)
-        try { localStorage.setItem('rcm.history', JSON.stringify(next)) } catch {}
-        return next
+    try {
+      const res = await fetch('/api/convert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceLang, targetLang, inputCode, dsaMode }),
       })
-    } else {
-      const msg = (data?.error || 'Conversion failed').toString()
+      const data = await res.json()
+      if (res.ok) {
+        const adv: AdvancedConversionResult = data
+        setOutputCode(adv.outputCode)
+        setExplanation(adv.explanation ?? '')
+        setComplexity(adv.complexity ?? '')
+        setTests(adv.tests ?? '')
+        setUsedLLM(!!adv.usedLLM)
+        toast.show('Conversion completed')
+        const item = { sourceLang, targetLang, inputCode, outputCode: adv.outputCode, createdAt: new Date().toISOString() }
+        setHistory(cur => {
+          const next = [item, ...cur].slice(0, 20)
+          try { localStorage.setItem('rcm.history', JSON.stringify(next)) } catch {}
+          return next
+        })
+      } else {
+        const rawMsg = (data?.error || 'Conversion failed').toString()
+        const isInvalidKey = /invalid_api_key|LLM error\s+401/i.test(rawMsg)
+        const isAborted = /aborted|AbortError/i.test(rawMsg)
+        const msg = isInvalidKey ? 'Invalid OpenAI API key. Set OPENAI_API_KEY to a valid key and restart.' : isAborted ? 'Conversion timed out. Please try again.' : rawMsg
+        setOutputCode('')
+        setExplanation(msg)
+        setComplexity('')
+        setTests('')
+        setUsedLLM(false)
+        toast.show(msg)
+      }
+    } catch (e: any) {
       setOutputCode('')
-      setExplanation(msg)
+      setExplanation('Conversion failed')
       setComplexity('')
       setTests('')
       setUsedLLM(false)
-      toast.show(msg)
+      toast.show('Conversion failed')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   useEffect(() => {
@@ -173,7 +186,10 @@ export default function Home() {
           setTests(adv.tests ?? '')
           setUsedLLM(!!adv.usedLLM)
         } else {
-          const msg = (data?.error || 'Conversion failed').toString()
+          const rawMsg = (data?.error || 'Conversion failed').toString()
+          const isInvalidKey = /invalid_api_key|LLM error\s+401/i.test(rawMsg)
+          const isAborted = /aborted|AbortError/i.test(rawMsg)
+          const msg = isInvalidKey ? 'Invalid OpenAI API key. Set OPENAI_API_KEY to a valid key and restart.' : isAborted ? 'Conversion timed out. Please try again.' : rawMsg
           setOutputCode('')
           setExplanation(msg)
           setComplexity('')
