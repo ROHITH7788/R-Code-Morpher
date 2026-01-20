@@ -356,8 +356,8 @@ export async function convertWithLLM(payload: { sourceLang: string; targetLang: 
         role: 'system',
         content:
           (dsaMode
-            ? 'You are an expert in data structures and algorithms. Convert the code to the TARGET LANGUAGE ONLY. Ensure the result compiles/runs as-is: add missing imports, standard entry points (e.g., main), and fix syntax automatically while preserving algorithmic correctness and time/space complexity. Use idiomatic data structures and standard libraries of the target language. Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}. The "outputCode" must be pure target-language code with no comments or text outside code. The "tests" must be target-language.'
-            : 'You are an expert software translator. Convert the code to the TARGET LANGUAGE ONLY. Ensure the result runs as-is: include necessary imports, standard entry points (e.g., main) and fix syntax automatically. Preserve functionality, use idiomatic patterns. Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}. The "outputCode" must be pure target-language code with no mixed languages or explanations.')
+            ? 'You are an expert in data structures and algorithms. Convert the code to the TARGET LANGUAGE ONLY. Ensure the result compiles/runs as-is: add missing imports, standard entry points (e.g., main), and fix syntax automatically while preserving algorithmic correctness and time/space complexity. Use idiomatic data structures and standard libraries of the target language. For Python, use // for integer division and ensure valid syntax (no spaced operators like "< ="). Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}. The "outputCode" must be pure target-language code with no comments or text outside code. The "tests" must be target-language.'
+            : 'You are an expert software translator. Convert the code to the TARGET LANGUAGE ONLY. Ensure the result runs as-is: include necessary imports, standard entry points (e.g., main) and fix syntax automatically. Preserve functionality, use idiomatic patterns. For Python, use // for integer division. Return strict JSON: {"outputCode": string, "explanation": string, "complexity": string, "tests": string}. The "outputCode" must be pure target-language code with no mixed languages or explanations.')
       },
       {
         role: 'user',
@@ -448,8 +448,9 @@ function postProcess(lang: string, code: string) {
     out = out.replace(/\b(\d+(?:\.\d+)?)[fFdD]\b/g, '$1')
     out = out.replace(/\b(\d+)[lL]\b/g, '$1')
     out = out.replace(/\btrue\b/gi, 'True').replace(/\bfalse\b/gi, 'False')
-    out = out.replace(/<\s*=/g, '<=').replace(/>\s*=/g, '>=')
+    out = out.replace(/<\s*=/g, '<=').replace(/>\s*=/g, '>=').replace(/!\s*=/g, '!=')
     out = out.replace(/(?<![!<>])=\s*=/g, '==')
+    out = out.replace(/\)\s*\/\)\s*\/\//g, ') //')
     out = out.replace(/mid\s*=\s*\(\s*([^)]+?)\s*\)\s*\/\s*2/g, 'mid = ($1) // 2')
     out = out.replace(/mid\s*=\s*([^\n]+?)\s*\/\s*2/g, 'mid = ($1) // 2')
     out = out.replace(/\s*-\s*/g, ' - ')
@@ -471,8 +472,9 @@ function postProcess(lang: string, code: string) {
       }
       out = outLines.join('\n')
     }
-    if (/while\s+left\s*<=\s*right\s*:\s*/.test(out)) {
-      const matches = Array.from(out.matchAll(/\b([A-Za-z_]\w*)\s*\[\s*(?:mid|left|right|[^\]]+)\]/g))
+    // Generalize binary search sort insertion
+    if (/while\s+\w+\s*<=\s*\w+\s*:/.test(out)) {
+      const matches = Array.from(out.matchAll(/\b([A-Za-z_]\w*)\s*\[\s*(?:mid|left|right|start|end|low|high|[^\]]+)\]/g))
       const arrName = matches.length ? matches[0][1] : null
       const hasSort = arrName ? new RegExp(`\\b${arrName}\\.sort\\s*\\(\\s*\\)`).test(out) : /\b\w+\.sort\s*\(\s*\)/.test(out)
       if (arrName && !hasSort) {
@@ -488,7 +490,7 @@ function postProcess(lang: string, code: string) {
         }
         if (!inserted) {
           for (let i = 0; i < lines.length; i++) {
-            if (/^\s*while\s+left\s*<=\s*right\s*:\s*$/.test(lines[i])) {
+            if (/^\s*while\s+\w+\s*<=\s*\w+\s*:\s*$/.test(lines[i])) {
               const pad = (lines[i].match(/^\s*/) || [''])[0]
               lines.splice(i, 0, `${pad}${arrName}.sort()`)
               inserted = true
@@ -510,13 +512,14 @@ function postProcess(lang: string, code: string) {
         out = lines.join('\n')
       }
     }
-    if (/^\s*while\s+left\s*<=\s*right\s*:\s*$/m.test(out)) {
+    // Generalize move print outside loop
+    if (/^\s*while\s+\w+\s*<=\s*\w+\s*:\s*$/m.test(out)) {
       const lines = out.split(/\r?\n/)
       let i = 0
       const toMove: Array<{ idx: number; text: string; indent: string; afterIdx: number; afterIndent: string }> = []
       while (i < lines.length) {
         const line = lines[i]
-        if (/^\s*while\s+left\s*<=\s*right\s*:\s*$/.test(line)) {
+        if (/^\s*while\s+\w+\s*<=\s*\w+\s*:\s*$/.test(line)) {
           const whileIndent = (line.match(/^\s*/) || [''])[0]
           let k = i + 1
           let afterIdx = i + 1
