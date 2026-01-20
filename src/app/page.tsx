@@ -122,20 +122,31 @@ export default function Home() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sourceLang, targetLang, inputCode, dsaMode }),
     })
-    const data: AdvancedConversionResult = await res.json()
-    setOutputCode(data.outputCode)
-    setExplanation(data.explanation ?? '')
-    setComplexity(data.complexity ?? '')
-    setTests(data.tests ?? '')
-    setUsedLLM(!!data.usedLLM)
+    const data = await res.json()
+    if (res.ok) {
+      const adv: AdvancedConversionResult = data
+      setOutputCode(adv.outputCode)
+      setExplanation(adv.explanation ?? '')
+      setComplexity(adv.complexity ?? '')
+      setTests(adv.tests ?? '')
+      setUsedLLM(!!adv.usedLLM)
+      toast.show('Conversion completed')
+      const item = { sourceLang, targetLang, inputCode, outputCode: adv.outputCode, createdAt: new Date().toISOString() }
+      setHistory(cur => {
+        const next = [item, ...cur].slice(0, 20)
+        try { localStorage.setItem('rcm.history', JSON.stringify(next)) } catch {}
+        return next
+      })
+    } else {
+      const msg = (data?.error || 'Conversion failed').toString()
+      setOutputCode('')
+      setExplanation(msg)
+      setComplexity('')
+      setTests('')
+      setUsedLLM(false)
+      toast.show(msg)
+    }
     setLoading(false)
-    toast.show('Conversion completed')
-    const item = { sourceLang, targetLang, inputCode, outputCode: data.outputCode, createdAt: new Date().toISOString() }
-    setHistory(cur => {
-      const next = [item, ...cur].slice(0, 20)
-      try { localStorage.setItem('rcm.history', JSON.stringify(next)) } catch {}
-      return next
-    })
   }
 
   useEffect(() => {
@@ -153,12 +164,23 @@ export default function Home() {
           body: JSON.stringify({ sourceLang, targetLang, inputCode, dsaMode }),
           signal: controller.signal,
         })
-        const data: AdvancedConversionResult = await res.json()
-        setOutputCode(data.outputCode)
-        setExplanation(data.explanation ?? '')
-        setComplexity(data.complexity ?? '')
-        setTests(data.tests ?? '')
-        setUsedLLM(!!data.usedLLM)
+        const data = await res.json()
+        if (res.ok) {
+          const adv: AdvancedConversionResult = data
+          setOutputCode(adv.outputCode)
+          setExplanation(adv.explanation ?? '')
+          setComplexity(adv.complexity ?? '')
+          setTests(adv.tests ?? '')
+          setUsedLLM(!!adv.usedLLM)
+        } else {
+          const msg = (data?.error || 'Conversion failed').toString()
+          setOutputCode('')
+          setExplanation(msg)
+          setComplexity('')
+          setTests('')
+          setUsedLLM(false)
+          toast.show(msg)
+        }
       } catch (e: any) {
         if (e?.name !== 'AbortError') {
         }
