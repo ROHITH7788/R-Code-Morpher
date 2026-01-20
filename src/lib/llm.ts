@@ -448,6 +448,8 @@ function postProcess(lang: string, code: string) {
     out = out.replace(/\b(\d+(?:\.\d+)?)[fFdD]\b/g, '$1')
     out = out.replace(/\b(\d+)[lL]\b/g, '$1')
     out = out.replace(/\btrue\b/gi, 'True').replace(/\bfalse\b/gi, 'False')
+    out = out.replace(/<\s*=/g, '<=').replace(/>\s*=/g, '>=')
+    out = out.replace(/(?<![!<>])=\s*=/g, '==')
     out = out.replace(/mid\s*=\s*\(\s*([^)]+?)\s*\)\s*\/\s*2/g, 'mid = ($1) // 2')
     out = out.replace(/mid\s*=\s*([^\n]+?)\s*\/\s*2/g, 'mid = ($1) // 2')
     out = out.replace(/\s*-\s*/g, ' - ')
@@ -507,6 +509,47 @@ function postProcess(lang: string, code: string) {
         }
         out = lines.join('\n')
       }
+    }
+    if (/^\s*while\s+left\s*<=\s*right\s*:\s*$/m.test(out)) {
+      const lines = out.split(/\r?\n/)
+      let i = 0
+      const toMove: Array<{ idx: number; text: string; indent: string; afterIdx: number; afterIndent: string }> = []
+      while (i < lines.length) {
+        const line = lines[i]
+        if (/^\s*while\s+left\s*<=\s*right\s*:\s*$/.test(line)) {
+          const whileIndent = (line.match(/^\s*/) || [''])[0]
+          let k = i + 1
+          let afterIdx = i + 1
+          while (k < lines.length) {
+            const curIndent = (lines[k].match(/^\s*/) || [''])[0]
+            const trimmed = lines[k].trim()
+            if (trimmed && curIndent.length <= whileIndent.length) { afterIdx = k; break }
+            if (/^\s*print\s*\(/.test(lines[k])) {
+              toMove.push({ idx: k, text: lines[k].trim(), indent: curIndent, afterIdx: -1, afterIndent: whileIndent })
+            }
+            k++
+            afterIdx = k
+          }
+          // assign afterIdx for recorded prints in this while block
+          for (let t of toMove) {
+            if (t.afterIdx === -1) t.afterIdx = afterIdx
+          }
+          i = k
+        } else {
+          i++
+        }
+      }
+      // Remove prints inside loops
+      for (let j = toMove.length - 1; j >= 0; j--) {
+        const rm = toMove[j]
+        lines.splice(rm.idx, 1)
+      }
+      // Insert prints after respective loops with loop-level indent
+      for (let m of toMove) {
+        const pad = m.afterIndent
+        lines.splice(m.afterIdx <= lines.length ? m.afterIdx : lines.length, 0, `${pad}${m.text}`)
+      }
+      out = lines.join('\n')
     }
     if (/def\s+main\s*\(\s*\)\s*:\s*/.test(out) && !/__name__\s*==\s*["']__main__["']/.test(out)) {
       out = `${out}\n\nif __name__ == "__main__":\n    main()`
