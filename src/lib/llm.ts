@@ -456,6 +456,35 @@ function postProcess(lang: string, code: string) {
     out = out.replace(/\s*\+\s*/g, ' + ')
     out = out.replace(/\s*=\s*/g, ' = ')
     out = out.replace(/,\s*/g, ', ')
+    // Fix invalid C-style array declarations in Python outputs
+    out = out.replace(/^\s*int\s+(\w+)\s*\[\]\s*=\s*(?:new\s+)?int\s*\[\s*([^\]]+)\s*\]\s*;?\s*$/gm, (_m, name, size) => `${name} = [0] * ${size}`)
+    // Ensure indentation inside Python blocks when missing
+    const needsIndentFix = /def\s+main\s*\(\s*\)\s*:\s*\n\s*\w/.test(out)
+    if (needsIndentFix) {
+      const lines = out.split(/\r?\n/)
+      let indent = 0
+      const outLines: string[] = []
+      for (let raw of lines) {
+        const t = raw.replace(/^\s+/, '')
+        if (!t) { outLines.push(''); continue }
+        if (/^(elif|else|except|finally)\b/.test(t)) indent = Math.max(0, indent - 1)
+        outLines.push('    '.repeat(indent) + t)
+        if (/^(def|class|if|elif|else|for|while|try|except|finally)\b.*:\s*$/.test(t)) indent++
+      }
+      out = outLines.join('\n')
+    }
+    // Insert ar.sort() for binary search patterns to ensure correctness
+    if (/while\s+left\s*<=\s*right\s*:\s*\n[\s\S]*?ar\[(?:mid|left|right)\]/.test(out) && !/ar\.sort\s*\(\s*\)/.test(out)) {
+      const lines = out.split(/\r?\n/)
+      for (let i = 0; i < lines.length; i++) {
+        if (/^\s*tar\s*=\s*int\s*\(\s*input\s*\(\s*\)\s*\)\s*$/.test(lines[i])) {
+          const pad = (lines[i].match(/^\s*/) || [''])[0]
+          lines.splice(i + 1, 0, `${pad}ar.sort()`)
+          break
+        }
+      }
+      out = lines.join('\n')
+    }
   } else if (lang === 'javascript' || lang === 'typescript') {
     out = out.replace(/\bprint\s*\(/g, 'console.log(')
   } else {
